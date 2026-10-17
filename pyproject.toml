@@ -1,0 +1,45 @@
+# uv project for the Mem2Gen reproduction + the J-lens (Jacobian) transport extension in jtransport/.
+# Created with `uv init --bare` (https://docs.astral.sh/uv/concepts/projects/init/); dependencies added with `uv add`.
+# Pins follow environment/requirements.txt (the paper's tested versions) except where this hardware forces a change:
+#   torch 2.13.0 (PyPI, CUDA 13.0 wheels) instead of 2.6.0+cu124: the RTX 5070 (Blackwell, sm_120) needs CUDA >= 12.8
+#     builds (https://pytorch.org/get-started/locally/);
+#   numpy 2.2.6 instead of 1.26.4: current pyarrow wheels (pulled by datasets) require NumPy >= 2.0;
+#   python 3.12 instead of 3.11 (both are supported by every pinned package).
+[project]
+name = "mem2gen-jtransport"
+version = "0.1.0"
+description = "Mem2Gen self-patching / LRSD with Jacobian-lens (J-lens) corrected cross-layer transport"
+requires-python = ">=3.12"
+dependencies = [
+    "accelerate==1.13.0",
+    "datasets==5.0.0",
+    "jlens",
+    "matplotlib==3.10.1",
+    "numpy==2.2.6",
+    "peft==0.15.2",
+    "python-dotenv==1.2.2",
+    "pyyaml==6.0.2",
+    "scipy==1.15.2",
+    "tokenizers==0.22.2",
+    "torch==2.13.0",
+    "tqdm==4.67.1",
+    "transformer-lens==3.9.0",
+    "transformers==5.11.0",
+    "trl==1.5.1",
+]
+
+[tool.uv.sources]
+# Anthropic's reference J-lens implementation (Apache-2.0), pinned to a commit: https://github.com/anthropics/jacobian-lens
+jlens = { git = "https://github.com/anthropics/jacobian-lens", rev = "581d398613e5602a5af361e1c34d3a92ea82ba8e" }
+
+[dependency-groups]
+dev = [
+    "pytest==9.1.1",
+]
+
+[tool.pytest.ini_options]
+# Run from the repo root; "." makes the jtransport package importable without installing it
+# (https://docs.pytest.org/en/stable/reference/reference.html#confval-pythonpath).
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = ["gpu: needs CUDA and the cached Qwen/Qwen2.5-0.5B-Instruct weights (deselect with -m 'not gpu')"]
