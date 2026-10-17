@@ -68,6 +68,21 @@
 !/tests/
 /tests/*
 !/tests/smoke_test.sh
+# J-lens transport extension: pytest suites (unit + GPU-marked)
+!/tests/test_*.py
+!/tests/conftest.py
+
+# J-lens transport extension (jtransport/): uv project, config template, agent docs, small committed results.
+# .env itself stays ignored by the leading /* rule (local config; never commit it).
+!/pyproject.toml
+!/uv.lock
+!/.python-version
+!/.env.example
+!/AGENTS.md
+!/CLAUDE.md
+!/paper/
+!/jtransport/
+!/results/
 
 # never commit these, even inside whitelisted directories
 __pycache__/
