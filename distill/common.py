@@ -38,7 +38,9 @@ except ImportError:
 # (chaining: Qwen 848 / LLaMA 1340; intersection: Qwen 8057 / LLaMA 8694), so a 1B-class model shares the data
 # of the 3B model of its family.  The data dirs are written by make_inject_data.py with the training sampler.
 MODELS = {"qwen2.5-1.5b": "Qwen/Qwen2.5-1.5B-Instruct", "qwen2.5-3b": "Qwen/Qwen2.5-3B-Instruct",
-          "llama3.2-1b": "meta-llama/Llama-3.2-1B-Instruct", "llama3.2-3b": "meta-llama/Llama-3.2-3B-Instruct"}
+          "llama3.2-1b": "meta-llama/Llama-3.2-1B-Instruct", "llama3.2-3b": "meta-llama/Llama-3.2-3B-Instruct",
+          # J-lens transport extension (jtransport/): fits an 8 GB GPU; shares the Qwen seed-848 sample (family "qwen")
+          "qwen2.5-0.5b": "Qwen/Qwen2.5-0.5B-Instruct"}
 INJECT_DATA = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "inject_lrsd"))
 DATA = {("qwen", "chaining"): os.path.join(INJECT_DATA, "chaining_qwen_seed848"),
         ("llama", "chaining"): os.path.join(INJECT_DATA, "chaining_llama_seed1340"),
