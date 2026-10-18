@@ -93,10 +93,12 @@ def exp1_table(summary):
 
 
 def exp2_table(summary):
-    lines = ["| arm | final EM | best EM | late-mean EM | memorization |", "|---|---|---|---|---|"]
+    lines = ["| arm | final EM | best EM | late-mean EM | mean EM, epochs >= 10 | memorization |",
+             "|---|---|---|---|---|---|"]
     for arm, st in summary["arms"].items():
         mem = _pct(st["final_mem_em"]) if st["final_mem_em"] is not None else "n/a"
-        lines.append(f"| {arm} | {_pct(st['final_em'])} | {_pct(st['best_em'])} | {_pct(st['late_mean_em'])} | {mem} |")
+        lines.append(f"| {arm} | {_pct(st['final_em'])} | {_pct(st['best_em'])} | {_pct(st['late_mean_em'])} "
+                     f"| {_pct(st['mean_em_from10'])} | {mem} |")
     lines += ["", "| test | only 2nd arm correct | only 1st arm correct | p (exact McNemar) |", "|---|---|---|---|"]
     for k, v in summary["tests"].items():
         lines.append(f"| {k} | {v['n01']} | {v['n10']} | {v['p']:.3g} |")

@@ -33,8 +33,10 @@ def summarize_lrsd(run_dirs, late_frac=0.2):
         em = [r["chain_uq_em"] for r in recs]
         n_late = max(1, int(round(late_frac * (len(recs) - 1))))  # last 20% of the trained epochs
         mem = [r["mem_em"] for r in recs if "mem_em" in r]
+        after10 = [e for r, e in zip(recs, em) if r["epoch"] >= 10]  # evaluations once the facts are memorized
         arms[arm] = {"epochs": recs[-1]["epoch"], "final_em": em[-1], "best_em": max(em),
-                     "late_mean_em": float(np.mean(em[-n_late:])), "final_mem_em": mem[-1] if mem else None,
+                     "late_mean_em": float(np.mean(em[-n_late:])), "mean_em_from10": float(np.mean(after10 or em)),
+                     "final_mem_em": mem[-1] if mem else None,
                      "curve": em, "curve_epochs": [r["epoch"] for r in recs]}
     tests = {}
     names = list(logs)
