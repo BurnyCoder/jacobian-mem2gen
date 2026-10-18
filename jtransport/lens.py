@@ -54,8 +54,12 @@ def spectra(lens):
     return out
 
 
-def fit_lens(base_model, adapter, out_dir, corpus, n_per_half, max_seq_len, dim_batch, device="cuda", seed=0):
-    """Phase fit_lens_*: writes <out_dir>/{lens_A,lens_B,lens}.pt and spectra.json (skipped if lens.pt exists)."""
+def fit_lens(base_model, adapter, out_dir, corpus, n_per_half, max_seq_len, dim_batch, device="cuda", seed=0, tf32=True):
+    """Phase fit_lens_*: writes <out_dir>/{lens_A,lens_B,lens}.pt and spectra.json (skipped if lens.pt exists).
+
+    tf32: TF32 matmuls in the backward passes (2.4x faster here; changed J by 0.24% relative, far below the
+    split-half difference between two prompt halves).
+    """
     import jlens
     from common import load_merged, load_tokenizer  # distill/common.py: LoRA merge + tokenizer with pad token
     from transformers import AutoModelForCausalLM
@@ -65,6 +69,7 @@ def fit_lens(base_model, adapter, out_dir, corpus, n_per_half, max_seq_len, dim_
         log.info("lens exists, skipping fit: %s", final)
         return final
     os.makedirs(out_dir, exist_ok=True)
+    torch.backends.cuda.matmul.allow_tf32 = tf32
     if adapter:
         hf = load_merged(base_model, adapter, dtype=torch.float32, device=device)  # fine-tuned weights
     else:

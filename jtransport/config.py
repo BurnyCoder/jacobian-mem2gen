@@ -33,7 +33,9 @@ class Config:
     base_model: str  # HF hub id resolved from `model`
     seed: int
     epochs: int
+    eval_every: int  # two-hop evaluation every N training epochs (train_inject_lrsd.py --eval_every)
     device: str
+    tf32: bool  # TF32 tensor-core matmuls in the in-process phases (J-lens fit, grids)
     out_root: str  # absolute; large artefacts (gitignored)
     results_dir: str  # absolute; small committed results
     log_dir: str  # absolute; timestamped logs
@@ -70,14 +72,16 @@ def load_config(env_file=None):
         base_model=MODELS[model],
         seed=int(_get("SEED", "848")),
         epochs=int(_get("EPOCHS", "50")),
+        eval_every=int(_get("EVAL_EVERY", "5")),
         device=_get("DEVICE", "cuda"),
+        tf32=_get("TF32", "1") == "1",
         out_root=repo_path(_get("OUT_ROOT", "experiment_logs/jtransport")),
         results_dir=repo_path(_get("RESULTS_DIR", "results/jtransport")),
         log_dir=repo_path(_get("LOG_DIR", "logs")),
         jlens_corpus=_get("JLENS_CORPUS", "NeelNanda/pile-10k"),
-        jlens_prompts_per_half=int(_get("JLENS_PROMPTS_PER_HALF", "80")),
+        jlens_prompts_per_half=int(_get("JLENS_PROMPTS_PER_HALF", "100")),
         jlens_max_seq_len=int(_get("JLENS_MAX_SEQ_LEN", "128")),
-        jlens_dim_batch=int(_get("JLENS_DIM_BATCH", "4")),
+        jlens_dim_batch=int(_get("JLENS_DIM_BATCH", "16")),
         ridge_grid=_floats(_get("RIDGE_GRID", "0.1,0.03,0.01,0.003")),
         ridge_tau=float(_get("RIDGE_TAU", "0.3")),
         ridge_questions=int(_get("RIDGE_QUESTIONS", "48")),
