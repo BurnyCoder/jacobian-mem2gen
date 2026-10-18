@@ -32,7 +32,8 @@ def data_dir():
 
 def run_dir(cfg, arm):
     """Training run directory of an arm: B (baseline), P<s>-<t>L1 (LRSD), J<s>-<t>L1 (J-space LRSD)."""
-    tag = {"baseline": "B", "lrsd": f"P{pair(cfg)}L1", "jlrsd": f"J{pair(cfg)}L1"}[arm]
+    tag = {"baseline": "B", "lrsd": f"P{pair(cfg)}L1", "jlrsd": f"J{pair(cfg)}L1",  # lambda = 1
+           "lrsd01": f"P{pair(cfg)}L01", "jlrsd01": f"J{pair(cfg)}L01"}[arm]  # lambda = 0.1 (paper's tag L01)
     return os.path.join(cfg.out_root, "train", f"inject_{tag}__{cfg.model}_s{cfg.seed}")
 
 
@@ -130,8 +131,8 @@ def fit_lens_base(cfg):
 def train_lrsd_arms(cfg):
     lens = os.path.join(cfg.out_root, "lens_base", "lens.pt")
     for arm in cfg.lrsd_arms:
-        extra = ["--lam", "1", "--pair", pair(cfg)]
-        if arm == "jlrsd":
+        extra = ["--lam", "0.1" if arm.endswith("01") else "1", "--pair", pair(cfg)]
+        if arm.startswith("jlrsd"):
             extra += ["--target", "jspace", "--lens", lens]
         _train(cfg, arm, extra)
 
@@ -139,7 +140,8 @@ def train_lrsd_arms(cfg):
 def compare_lrsd(cfg):
     from jtransport import report
     from jtransport.compare_lrsd import summarize_lrsd
-    dirs = {a: run_dir(cfg, a) for a in ["baseline", *cfg.lrsd_arms]}
+    dirs = {a: run_dir(cfg, a) for a in ["baseline", *cfg.lrsd_arms]
+            if os.path.exists(os.path.join(run_dir(cfg, a), "log.jsonl"))}  # arms trained so far
     summary = summarize_lrsd(dirs)
     summary["config"] = cfg.as_dict()
     report.write_json(summary, os.path.join(cfg.results_dir, "exp2.json"))
