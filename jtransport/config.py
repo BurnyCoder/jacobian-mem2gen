@@ -94,7 +94,7 @@ def load_config(env_file=None):
         jlens_pp_positions=int(_get("JLENS_PP_POSITIONS", "4")),
         max_questions=int(mq) if mq else None,
         row_batch=int(_get("ROW_BATCH", "24")),
-        lrsd_arms=_names(_get("LRSD_ARMS", "lrsd,jlrsd")),
+        lrsd_arms=_names(_get("LRSD_ARMS", "lrsd,jlrsd,lrsd01,jlrsd01")),
         lrsd_pair=_get("LRSD_PAIR", "auto"),
         phases=_names(_get("PHASES", "")),
     )

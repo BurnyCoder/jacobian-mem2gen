@@ -42,7 +42,8 @@ def summarize_lrsd(run_dirs, late_frac=0.2):
     for a in names[1:]:
         n01, n10, p = mcnemar(finals[names[0]], finals[a])  # n01: correct only in arm a
         tests[f"{a}_vs_{names[0]}"] = {"n01": n01, "n10": n10, "p": p}
-    if "lrsd" in finals and "jlrsd" in finals:
-        n01, n10, p = mcnemar(finals["lrsd"], finals["jlrsd"])
-        tests["jlrsd_vs_lrsd"] = {"n01": n01, "n10": n10, "p": p}
+    for raw, jsp in (("lrsd", "jlrsd"), ("lrsd01", "jlrsd01")):  # J-space vs raw-coordinate loss at the same lambda
+        if raw in finals and jsp in finals:
+            n01, n10, p = mcnemar(finals[raw], finals[jsp])
+            tests[f"{jsp}_vs_{raw}"] = {"n01": n01, "n10": n10, "p": p}
     return {"arms": arms, "tests": tests}
