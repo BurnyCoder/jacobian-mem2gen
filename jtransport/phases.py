@@ -83,7 +83,12 @@ def patch_grids(cfg):
     if all(os.path.exists(os.path.join(out, f"{a}.npy")) for a in cfg.transports):
         log.info("grids exist, skipping (%s)", out)
         return
-    run_grids(cfg, data_dir(), adapter(cfg), os.path.join(cfg.out_root, "lens_finetuned"), out)
+    run_grids(cfg, data_dir(), adapter(cfg), lens_dirs(cfg), out, cfg.transports)
+
+
+def lens_dirs(cfg):
+    """Lens directory per arm suffix: '' = reference J-lens estimator, '_pp' = per-position (same-token) Jacobian."""
+    return {"": os.path.join(cfg.out_root, "lens_finetuned"), "_pp": os.path.join(cfg.out_root, "lens_finetuned_pp")}
 
 
 def compare(cfg):
@@ -96,9 +101,11 @@ def compare(cfg):
     grids = {a: np.load(os.path.join(gdir, f"{a}.npy")) for a in meta["arms"]}
     s, t = (int(x) for x in pair(cfg).split("-"))
     summary = summarize(grids, qid, lrsd_pair=(s, t), seed=cfg.seed)
-    summary["ridge"] = json.load(open(os.path.join(gdir, "ridge.json")))
     summary["geometry"] = json.load(open(os.path.join(gdir, "diag.json")))["geometry"]
-    summary["spectra"] = json.load(open(os.path.join(cfg.out_root, "lens_finetuned", "spectra.json")))
+    for sfx, d in lens_dirs(cfg).items():  # ridge selection and J spectra of every lens that was used
+        if os.path.exists(os.path.join(gdir, f"ridge{sfx}.json")):
+            summary[f"ridge{sfx}"] = json.load(open(os.path.join(gdir, f"ridge{sfx}.json")))
+            summary[f"spectra{sfx}"] = json.load(open(os.path.join(d, "spectra.json")))
     summary["config"] = cfg.as_dict()
     os.makedirs(cfg.results_dir, exist_ok=True)
     report.write_json(summary, os.path.join(cfg.results_dir, "exp1.json"))
@@ -106,8 +113,10 @@ def compare(cfg):
     open(os.path.join(cfg.results_dir, "exp1_tables.md"), "w").write(table + "\n")
     log.info("experiment 1:\n%s", table)
     report.rescue_heatmaps(grids, qid, os.path.join(cfg.results_dir, "rescue_heatmaps.png"))
-    report.bridge_readout_plot(np.load(os.path.join(gdir, "bridge_rank.npy")),
-                               os.path.join(cfg.results_dir, "bridge_readout.png"))
+    for sfx in lens_dirs(cfg):
+        if os.path.exists(os.path.join(gdir, f"bridge_rank{sfx}.npy")):
+            report.bridge_readout_plot(np.load(os.path.join(gdir, f"bridge_rank{sfx}.npy")),
+                                       os.path.join(cfg.results_dir, f"bridge_readout{sfx}.png"))
     run_cmd([sys.executable, os.path.join(REPO, "patch", "compute_oracle.py"),
              *[os.path.join(gdir, f"{a}.npy") for a in meta["arms"]], "--topk", "3"], cwd=REPO)
 
@@ -140,5 +149,28 @@ def compare_lrsd(cfg):
     report.lrsd_curves(summary, os.path.join(cfg.results_dir, "lrsd_curves.png"))
 
 
+def fit_lens_finetuned_pp(cfg):
+    """Ablation: same-token (per-position) Jacobian of the fine-tuned model instead of jlens' sum over later tokens."""
+    from jtransport.lens import fit_lens
+    fit_lens(cfg.base_model, adapter(cfg), lens_dirs(cfg)["_pp"], cfg.jlens_corpus, cfg.jlens_pp_prompts_per_half,
+             cfg.jlens_max_seq_len, cfg.jlens_dim_batch, cfg.device, cfg.seed, cfg.tf32, estimator="per_position",
+             positions=cfg.jlens_pp_positions)
+
+
+def patch_grids_pp(cfg):
+    """Ablation arms (jlens_pp, noise_jlens_pp) added to the existing grids."""
+    from jtransport.grid import run_grids
+    out = os.path.join(cfg.out_root, "grids")
+    if all(os.path.exists(os.path.join(out, f"{a}.npy")) for a in cfg.transports_pp):
+        log.info("ablation grids exist, skipping (%s)", out)
+        return
+    run_grids(cfg, data_dir(), adapter(cfg), lens_dirs(cfg), out, cfg.transports_pp)
+
+
+def compare_all(cfg):
+    """Experiment-1 statistics again, now including the ablation arms."""
+    compare(cfg)
+
+
 PHASES = [make_data, finetune_baseline, fit_lens_finetuned, patch_grids, compare, fit_lens_base, train_lrsd_arms,
-          compare_lrsd]  # execution order
+          compare_lrsd, fit_lens_finetuned_pp, patch_grids_pp, compare_all]  # execution order

@@ -158,20 +158,22 @@ def summarize(grids, qid, lrsd_pair, n_boot=10000, seed=0):
     def boot(a, b):
         return paired_bootstrap(masks[a], masks[b], n_boot=n_boot, seed=seed)
 
-    for m in ("copy", "jlens", "norm"):
+    for m in ("copy", "jlens", "jlens_pp", "norm"):
         if m in masks and f"noise_{m}" in masks:
             contrasts[f"{m}_minus_noise_{m}"] = boot(m, f"noise_{m}")  # gain over the same-size random perturbation
-    for a, b in (("copy", "noise_copy"), ("jlens", "noise_jlens"), ("jlens", "copy")):  # continuous MRR contrasts
+    for a, b in (("copy", "noise_copy"), ("jlens", "noise_jlens"), ("jlens", "copy"), ("jlens_pp", "noise_jlens_pp"),
+                 ("jlens_pp", "copy")):  # continuous MRR contrasts
         if a in gains and b in gains:
             for k in ("all", "back"):
                 contrasts[f"mrr_gain_{k}_{a}_minus_{b}"] = paired_bootstrap(gains[a][k], gains[b][k], n_boot=n_boot,
                                                                            seed=seed)
-    if "copy" in masks and "jlens" in masks:
-        contrasts["jlens_minus_copy"] = boot("jlens", "copy")
-        n01, n10, p = mcnemar(masks["copy"], masks["jlens"])  # n01: only jlens rescues, n10: only copy rescues
-        contrasts["mcnemar_copy_vs_jlens"] = {"n01": n01, "n10": n10, "p": p}
-        if "noise_copy" in masks and "noise_jlens" in masks:  # difference of noise-corrected gains
-            dj = masks["jlens"].astype(float) - masks["noise_jlens"]
-            dc = masks["copy"].astype(float) - masks["noise_copy"]
-            contrasts["jlens_gain_minus_copy_gain"] = paired_bootstrap(dj, dc, n_boot=n_boot, seed=seed)
+    for j in ("jlens", "jlens_pp"):  # each Jacobian transport against the paper's copy
+        if "copy" in masks and j in masks:
+            contrasts[f"{j}_minus_copy"] = boot(j, "copy")
+            n01, n10, p = mcnemar(masks["copy"], masks[j])  # n01: only the J arm rescues, n10: only copy rescues
+            contrasts[f"mcnemar_copy_vs_{j}"] = {"n01": n01, "n10": n10, "p": p}
+            if "noise_copy" in masks and f"noise_{j}" in masks:  # difference of noise-corrected gains
+                dj = masks[j].astype(float) - masks[f"noise_{j}"]
+                dc = masks["copy"].astype(float) - masks["noise_copy"]
+                contrasts[f"{j}_gain_minus_copy_gain"] = paired_bootstrap(dj, dc, n_boot=n_boot, seed=seed)
     return {"arms": arms, "contrasts": contrasts}
