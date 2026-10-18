@@ -16,6 +16,12 @@ Both assume every layer shares one coordinate system. The [J-lens](https://trans
 
 Details, statistics and sources are in [docs/jtransport.md](docs/jtransport.md). Results and interpretation are in [results/jtransport/REPORT.md](results/jtransport/REPORT.md).
 
+**Result** (Qwen2.5-0.5B, one seed): **the Jacobian correction does not help.**
+- J-lens transport rescues fewer failed two-hop answers than the raw copy: 29.4% vs 35.2% of 384, p = 0.0016. Corrected for its smaller perturbation, the two are equal.
+- A same-token Jacobian that can be estimated stably is a near no-op.
+- J-space LRSD is not better than LRSD (λ = 1: 9.3% vs 8.3% final two-hop accuracy, p = 0.67).
+- Random perturbations of the same size rescue more questions than the copy (44.8%). At this scale the paper's restore-oracle is largely a perturbation effect.
+
 **Quick start** (Linux + NVIDIA GPU with ≥ 8 GB, [uv](https://docs.astral.sh/uv/)):
 
 ```bash
