@@ -14,6 +14,7 @@ Equivalence with the original kernels is tested in tests/test_gpu_kernels.py. Di
   * decoding uses a TransformerLens KV cache with the patch applied on the prefill pass, which is identical to
     re-patching every step because the patched positions are in the prompt and attention is causal.
 """
+import gc
 import json
 import logging
 import os
@@ -331,4 +332,5 @@ def run_grids(cfg, data_dir, adapter, lens_dirs, out_dir, arm_names):
     json.dump({"geometry": geo}, open(diag_path, "w"), indent=1)
     log.info("grids written to %s (%.1f min)", out_dir, (time.time() - t0) / 60)
     del model
+    gc.collect()  # break nn.Module reference cycles so the weights are really freed
     torch.cuda.empty_cache()

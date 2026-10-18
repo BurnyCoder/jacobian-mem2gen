@@ -9,6 +9,7 @@ pretraining-like sequences of 128 tokens and reports that ~100 prompts already w
 ridge selection in jtransport/transport.select_ridge; the merged lens drives the `jlens` transport and the J-space
 LRSD loss. Saved in fp32 (jlens saves fp16 by default) because the transport inverts J_t.
 """
+import gc
 import json
 import logging
 import math
@@ -172,5 +173,6 @@ def fit_lens(base_model, adapter, out_dir, corpus, n_per_half, max_seq_len, dim_
         if os.path.exists(ck):
             os.remove(ck)
     del model, hf
+    gc.collect()  # break nn.Module reference cycles so the weights are really freed
     torch.cuda.empty_cache()
     return final
