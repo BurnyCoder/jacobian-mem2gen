@@ -88,7 +88,7 @@ def exp1_table(summary):
         if "mean" in v:
             lines.append(f"| {k} | {v['mean']:+.3f} | [{v['lo']:+.3f}, {v['hi']:+.3f}] |")
         else:
-            lines.append(f"| {k} | only jlens {v['n01']}, only copy {v['n10']} | p = {v['p']:.3g} |")
+            lines.append(f"| {k} | only {k.split('_vs_')[1]} {v['n01']}, only copy {v['n10']} | p = {v['p']:.3g} |")
     return "\n".join(lines)
 
 

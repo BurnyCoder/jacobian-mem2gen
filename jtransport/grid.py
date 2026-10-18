@@ -231,10 +231,32 @@ def bridge_readout(model, H, J, bridge):
 
 
 # ----------------------------------------------------------------------------------------------------------- runner
-def run_grids(cfg, data_dir, adapter, lens_dir, out_dir):
-    """Phase `patch_grids`: ridge selection, then all arms' grids; writes <out_dir>/<arm>.npy + meta/diag/ridge json.
+def arm_spec(arm):
+    """Arm name -> (Transport method, lens suffix): 'jlens_pp' -> ('jlens', '_pp') uses the per-position lens."""
+    return (arm[:-3], "_pp") if arm.endswith("_pp") else (arm, "")
 
-    Resumable: per-question results are checkpointed every 10 questions to <out_dir>/partial.npz.
+
+def _select_c(model, qs, cfg, J, suffix, out_dir):
+    """Split-half ridge selection for one lens (cached in ridge<suffix>.json); answers are never used."""
+    path = os.path.join(out_dir, f"ridge{suffix}.json")
+    if os.path.exists(path):
+        return json.load(open(path))["c"]
+    states = [clean_states(model, q["tokens"], q["positions"])[0] for q in qs[: cfg.ridge_questions] if q["positions"]]
+    c, table = select_ridge(J[suffix + "_A"], J[suffix + "_B"], states, cfg.ridge_grid, cfg.ridge_tau)
+    for r in table:
+        log.info("ridge%s c=%-6g instability=%.3f rel_perturbation=%.3f", suffix, r["c"], r["instability"],
+                 r["rel_perturbation"])
+    json.dump({"c": c, "tau": cfg.ridge_tau, "table": table}, open(path, "w"), indent=1)
+    log.info("ridge%s c = %g", suffix, c)
+    return c
+
+
+def run_grids(cfg, data_dir, adapter, lens_dirs, out_dir, arm_names):
+    """Phases `patch_grids` / `patch_grids_pp`: ridge selection, then the grids of `arm_names`.
+
+    Writes <out_dir>/<arm>.npy and merges meta.json / diag.json / bridge_rank<suffix>.npy with arms written before,
+    so arms can be added later without recomputing the others. lens_dirs: {suffix: dir} ("" = J-lens, "_pp" =
+    per-position). Resumable: per-question results are checkpointed every 10 questions to <out_dir>/partial_<arms>.npz.
     """
     os.makedirs(out_dir, exist_ok=True)
     # TF32 (cfg.tf32, default on) makes the grid ~1.4x faster on this GPU; measured on 4 questions x 4 arms it changed
@@ -248,44 +270,36 @@ def run_grids(cfg, data_dir, adapter, lens_dir, out_dir):
     qs = load_questions(data_dir, model, tokenizer, cfg.max_questions)
 
     from jlens import JacobianLens  # reference J-lens container (fp32 matrices saved by jtransport/lens.py)
-    J = {k: stack_jacobians(JacobianLens.load(os.path.join(lens_dir, f"lens{k}.pt")).jacobians, L).to(cfg.device)
-         for k in ("", "_A", "_B")}  # merged lens and the two split halves
+    suffixes = sorted({arm_spec(a)[1] for a in arm_names if "jlens" in a})  # lenses this run needs
+    J = {sfx + k: stack_jacobians(JacobianLens.load(os.path.join(lens_dirs[sfx], f"lens{k}.pt")).jacobians, L)
+         .to(cfg.device) for sfx in suffixes for k in ("", "_A", "_B")}  # merged lens and the two split halves
+    c = {sfx: _select_c(model, qs, cfg, J, sfx, out_dir) for sfx in suffixes}
+    arms = {}
+    for a in arm_names:
+        method, sfx = arm_spec(a)
+        arms[a] = Transport(method, J=J.get(sfx), c=c.get(sfx, 0.0), seed=cfg.seed)
+    geo_arms = [a for a in arms if arm_spec(a)[0] in ("copy", "jlens")]  # arms whose geometry is logged
 
-    ridge_path = os.path.join(out_dir, "ridge.json")
-    if os.path.exists(ridge_path):
-        c = json.load(open(ridge_path))["c"]
-    else:  # split-half stability on clean entity states of the first questions (answers unused)
-        states = [clean_states(model, q["tokens"], q["positions"])[0] for q in qs[: cfg.ridge_questions]
-                  if q["positions"]]
-        c, table = select_ridge(J["_A"], J["_B"], states, cfg.ridge_grid, cfg.ridge_tau)
-        for r in table:
-            log.info("ridge c=%-6g instability=%.3f rel_perturbation=%.3f", r["c"], r["instability"],
-                     r["rel_perturbation"])
-        json.dump({"c": c, "tau": cfg.ridge_tau, "table": table}, open(ridge_path, "w"), indent=1)
-    log.info("ridge c = %g", c)
-    arms = {a: Transport(a, J=J[""], c=c, seed=cfg.seed) for a in cfg.transports}
-
-    part_path = os.path.join(out_dir, "partial.npz")
+    part_path = os.path.join(out_dir, f"partial_{'-'.join(arm_names)}.npz")
     done = {}
     if os.path.exists(part_path):  # resume
-        z = np.load(part_path, allow_pickle=True)
-        done = z["done"].item()
+        done = np.load(part_path, allow_pickle=True)["done"].item()
         log.info("resuming: %d/%d questions already done", len(done), len(qs))
     t0 = time.time()
-    for i, q in enumerate(qs):
+    for q in qs:
         if q["qid"] in done:
             continue
         grids, H, _ = question_grid(model, q, arms, cfg.row_batch, eos_id)
-        diag = {"bridge_rank": bridge_readout(model, H, J[""], q["bridge"]) if q["positions"] else None,
-                "geometry": {a: [arms[a].diagnostics(H, t) for t in range(L)] for a in ("copy", "jlens") if a in arms}
+        diag = {"bridge_rank": {sfx: bridge_readout(model, H, J[sfx], q["bridge"]) for sfx in suffixes}
+                if q["positions"] else None,
+                "geometry": {a: [arms[a].diagnostics(H, t) for t in range(L)] for a in geo_arms}
                 if q["positions"] else None}
         done[q["qid"]] = {"grids": grids, "diag": diag}
         n = len(done)
-        el = (time.time() - t0) / 60
         log.info("question %d/%d  entity=%r P=%d  no-patch EM=%s  oracle EM: %s  (%.1f min)",
                  n, len(qs), q["entity"], len(q["positions"]),
                  [int(g) for g in grids[next(iter(arms))][:, 1, 0, 0]],
-                 {a: int((g[:, 1] >= 1).any()) for a, g in grids.items()}, el)
+                 {a: int((g[:, 1] >= 1).any()) for a, g in grids.items()}, (time.time() - t0) / 60)
         if n % 10 == 0 or n == len(qs):
             np.savez(part_path, done=np.array(done, dtype=object))  # checkpoint for resume
     # --------------------------------------------------------------- assemble (row order = original row index)
@@ -294,18 +308,27 @@ def run_grids(cfg, data_dir, adapter, lens_dir, out_dir):
     for arm in arms:
         arr = np.stack([done[qid]["grids"][arm][j] for _, qid, j in order])  # (N_rows, 2, L, L)
         np.save(os.path.join(out_dir, f"{arm}.npy"), arr)
-    meta = {"rows": [{"row": r, "qid": qid, "answer": qmap[qid]["answers"][j]} for r, qid, j in order],
+    meta_path, diag_path = os.path.join(out_dir, "meta.json"), os.path.join(out_dir, "diag.json")
+    old = json.load(open(meta_path)) if os.path.exists(meta_path) else {"arms": [], "ridge_c": {}}
+    rows = [{"row": r, "qid": qid, "answer": qmap[qid]["answers"][j]} for r, qid, j in order]
+    if old.get("rows") not in (None, rows):
+        raise ValueError(f"{meta_path}: rows differ from this run (different questions?); use a new OUT_ROOT")
+    ridge_old = old["ridge_c"] if isinstance(old["ridge_c"], dict) else {"": old["ridge_c"]}
+    meta = {"rows": rows,
             "questions": [{k: q[k] for k in ("qid", "question", "entity", "bridge", "positions", "answers")}
                           for q in qs],
-            "n_layers": L, "ridge_c": c, "arms": list(arms), "adapter": adapter, "base_model": cfg.base_model}
-    json.dump(meta, open(os.path.join(out_dir, "meta.json"), "w"), indent=1)
-    br = [done[q["qid"]]["diag"]["bridge_rank"] for q in qs if done[q["qid"]]["diag"]["bridge_rank"] is not None]
-    geo = {a: {k: float(np.mean([d[k] for q in qs if done[q["qid"]]["diag"]["geometry"]
-                                 for d in done[q["qid"]]["diag"]["geometry"][a]]))
-               for k in ("rel_perturbation", "readout_error") if k != "readout_error" or a == "jlens"}
-           for a in ("copy", "jlens") if a in arms}
-    np.save(os.path.join(out_dir, "bridge_rank.npy"), np.stack(br) if br else np.zeros((0, 2, L)))
-    json.dump({"geometry": geo}, open(os.path.join(out_dir, "diag.json"), "w"), indent=1)
+            "n_layers": L, "ridge_c": {**ridge_old, **c}, "arms": old["arms"] + [a for a in arms if a not in old["arms"]],
+            "adapter": adapter, "base_model": cfg.base_model}
+    json.dump(meta, open(meta_path, "w"), indent=1)
+    for sfx in suffixes:
+        br = [done[q["qid"]]["diag"]["bridge_rank"][sfx] for q in qs if done[q["qid"]]["diag"]["bridge_rank"]]
+        np.save(os.path.join(out_dir, f"bridge_rank{sfx}.npy"), np.stack(br) if br else np.zeros((0, 2, L)))
+    geo = json.load(open(diag_path))["geometry"] if os.path.exists(diag_path) else {}
+    for a in geo_arms:
+        keys = ("rel_perturbation", "readout_error") if "jlens" in a else ("rel_perturbation",)
+        geo[a] = {k: float(np.mean([d[k] for q in qs if done[q["qid"]]["diag"]["geometry"]
+                                    for d in done[q["qid"]]["diag"]["geometry"][a]])) for k in keys}
+    json.dump({"geometry": geo}, open(diag_path, "w"), indent=1)
     log.info("grids written to %s (%.1f min)", out_dir, (time.time() - t0) / 60)
     del model
     torch.cuda.empty_cache()
