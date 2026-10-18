@@ -28,7 +28,7 @@ uv run python -m jtransport.run_experiment   # all phases, resumable; log in log
 
 For a toy run of every phase in about 30 min, override settings through the environment: `EPOCHS=1 MAX_QUESTIONS=3 JLENS_PROMPTS_PER_HALF=2 RIDGE_QUESTIONS=3 OUT_ROOT=experiment_logs/jtransport_toy RESULTS_DIR=experiment_logs/jtransport_toy/results uv run python -m jtransport.run_experiment`. `PHASES=compare` re-runs a single phase.
 
-**What happens when you run it.** `jtransport/run_experiment.py` runs eight phases in order. Each phase skips work whose output already exists.
+**What happens when you run it.** `jtransport/run_experiment.py` runs eight main phases in order, then three ablation phases (per-position Jacobian, see the docs). Each phase skips work whose output already exists.
 
 ```mermaid
 flowchart LR
@@ -44,6 +44,9 @@ flowchart LR
   S --> T
   A -. baseline arm .-> R2
   T -->|compare_lrsd| R2[results/jtransport/exp2*]
+  A -->|fit_lens_finetuned_pp<br/>same-token Jacobian| JP[per-position J]
+  JP -->|patch_grids_pp<br/>jlens_pp · noise_jlens_pp| G
+  G -->|compare_all| R1
 ```
 
 1. **`make_data`** writes the paper's seeded 1000-fact sample: 500 two-hop rows, 409 unique questions.
@@ -52,6 +55,7 @@ flowchart LR
 4. **`patch_grids`** first picks the ridge strength from the two halves without looking at answers. Then, for every question, target layer and arm, it patches all source layers in one batched pass. It records the first-answer-token rank and the greedy exact match, in the paper's `(N, 2, L, L)` grid format.
 5. **`compare`** writes the oracle, controls, CIs and figures.
 6. **`fit_lens_base`**, **`train_lrsd_arms`** and **`compare_lrsd`** repeat the training with the paper's LRSD loss and with the J-space loss, then compare the two-hop accuracy of all three arms.
+7. **`fit_lens_finetuned_pp`**, **`patch_grids_pp`** and **`compare_all`** are the ablation. They fit the same-token Jacobian (jlens sums over later tokens), add the `jlens_pp` / `noise_jlens_pp` arms to the grids, and recompute the statistics.
 
 Code layout: `jtransport/` holds the extension. The paper's code is reused, with two small flagged additions: `qwen2.5-0.5b` in `distill/common.MODELS`, and `--target jspace` in `distill/train_inject_lrsd.py`. Working notes for contributors are in [AGENTS.md](AGENTS.md).
 
