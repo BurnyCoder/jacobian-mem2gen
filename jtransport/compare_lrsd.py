@@ -33,8 +33,10 @@ def summarize_lrsd(run_dirs, late_frac=0.2):
         em = [r["chain_uq_em"] for r in recs]
         n_late = max(1, int(round(late_frac * (len(recs) - 1))))  # last 20% of the trained epochs
         mem = [r["mem_em"] for r in recs if "mem_em" in r]
+        after10 = [e for r, e in zip(recs, em) if r["epoch"] >= 10]  # evaluations once the facts are memorized
         arms[arm] = {"epochs": recs[-1]["epoch"], "final_em": em[-1], "best_em": max(em),
-                     "late_mean_em": float(np.mean(em[-n_late:])), "final_mem_em": mem[-1] if mem else None,
+                     "late_mean_em": float(np.mean(em[-n_late:])), "mean_em_from10": float(np.mean(after10 or em)),
+                     "final_mem_em": mem[-1] if mem else None,
                      "curve": em, "curve_epochs": [r["epoch"] for r in recs]}
     tests = {}
     names = list(logs)
@@ -42,7 +44,8 @@ def summarize_lrsd(run_dirs, late_frac=0.2):
     for a in names[1:]:
         n01, n10, p = mcnemar(finals[names[0]], finals[a])  # n01: correct only in arm a
         tests[f"{a}_vs_{names[0]}"] = {"n01": n01, "n10": n10, "p": p}
-    if "lrsd" in finals and "jlrsd" in finals:
-        n01, n10, p = mcnemar(finals["lrsd"], finals["jlrsd"])
-        tests["jlrsd_vs_lrsd"] = {"n01": n01, "n10": n10, "p": p}
+    for raw, jsp in (("lrsd", "jlrsd"), ("lrsd01", "jlrsd01")):  # J-space vs raw-coordinate loss at the same lambda
+        if raw in finals and jsp in finals:
+            n01, n10, p = mcnemar(finals[raw], finals[jsp])
+            tests[f"{jsp}_vs_{raw}"] = {"n01": n01, "n10": n10, "p": p}
     return {"arms": arms, "tests": tests}
