@@ -1,0 +1,167 @@
+{
+ "arms": {
+  "baseline": {
+   "epochs": 50,
+   "final_em": 0.06601466992665037,
+   "best_em": 0.08068459657701711,
+   "late_mean_em": 0.05134474327628362,
+   "final_mem_em": 0.981,
+   "curve": [
+    0.0,
+    0.04156479217603912,
+    0.0488997555012225,
+    0.044009779951100246,
+    0.08068459657701711,
+    0.05378973105134474,
+    0.04645476772616137,
+    0.05378973105134474,
+    0.05867970660146699,
+    0.03667481662591687,
+    0.06601466992665037
+   ],
+   "curve_epochs": [
+    0,
+    5,
+    10,
+    15,
+    20,
+    25,
+    30,
+    35,
+    40,
+    45,
+    50
+   ]
+  },
+  "lrsd": {
+   "epochs": 50,
+   "final_em": 0.08312958435207823,
+   "best_em": 0.11246943765281174,
+   "late_mean_em": 0.09535452322738386,
+   "final_mem_em": 0.979,
+   "curve": [
+    0.0,
+    0.039119804400977995,
+    0.09046454767726161,
+    0.08068459657701711,
+    0.10513447432762836,
+    0.11246943765281174,
+    0.11246943765281174,
+    0.08801955990220049,
+    0.10268948655256724,
+    0.10757946210268948,
+    0.08312958435207823
+   ],
+   "curve_epochs": [
+    0,
+    5,
+    10,
+    15,
+    20,
+    25,
+    30,
+    35,
+    40,
+    45,
+    50
+   ]
+  },
+  "jlrsd": {
+   "epochs": 50,
+   "final_em": 0.09290953545232274,
+   "best_em": 0.10757946210268948,
+   "late_mean_em": 0.097799511002445,
+   "final_mem_em": 0.99,
+   "curve": [
+    0.0,
+    0.05623471882640587,
+    0.061124694376528114,
+    0.061124694376528114,
+    0.09046454767726161,
+    0.10757946210268948,
+    0.08312958435207823,
+    0.08801955990220049,
+    0.09046454767726161,
+    0.10268948655256724,
+    0.09290953545232274
+   ],
+   "curve_epochs": [
+    0,
+    5,
+    10,
+    15,
+    20,
+    25,
+    30,
+    35,
+    40,
+    45,
+    50
+   ]
+  }
+ },
+ "tests": {
+  "lrsd_vs_baseline": {
+   "n01": 17,
+   "n10": 10,
+   "p": 0.24778856337070465
+  },
+  "jlrsd_vs_baseline": {
+   "n01": 27,
+   "n10": 16,
+   "p": 0.12628947438543037
+  },
+  "jlrsd_vs_lrsd": {
+   "n01": 26,
+   "n10": 22,
+   "p": 0.6654658120766188
+  }
+ },
+ "config": {
+  "model": "qwen2.5-0.5b",
+  "base_model": "Qwen/Qwen2.5-0.5B-Instruct",
+  "seed": 848,
+  "epochs": 50,
+  "eval_every": 5,
+  "device": "cuda",
+  "tf32": true,
+  "out_root": "/home/burny/projects/Mem2Gen-71FF/experiment_logs/jtransport",
+  "results_dir": "/home/burny/projects/Mem2Gen-71FF/results/jtransport",
+  "log_dir": "/home/burny/projects/Mem2Gen-71FF/logs",
+  "jlens_corpus": "NeelNanda/pile-10k",
+  "jlens_prompts_per_half": 100,
+  "jlens_max_seq_len": 128,
+  "jlens_dim_batch": 16,
+  "ridge_grid": [
+   0.1,
+   0.03,
+   0.01,
+   0.003
+  ],
+  "ridge_tau": 0.3,
+  "ridge_questions": 48,
+  "transports": [
+   "copy",
+   "jlens",
+   "noise_copy",
+   "noise_jlens",
+   "norm"
+  ],
+  "transports_pp": [
+   "jlens_pp",
+   "noise_jlens_pp"
+  ],
+  "jlens_pp_prompts_per_half": 40,
+  "jlens_pp_positions": 4,
+  "max_questions": null,
+  "row_batch": 24,
+  "lrsd_arms": [
+   "lrsd",
+   "jlrsd"
+  ],
+  "lrsd_pair": "auto",
+  "phases": [
+   "compare_lrsd"
+  ]
+ }
+}

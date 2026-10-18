@@ -47,6 +47,9 @@ class Config:
     ridge_tau: float
     ridge_questions: int
     transports: list
+    transports_pp: list  # ablation arms using the per-position Jacobian
+    jlens_pp_prompts_per_half: int
+    jlens_pp_positions: int  # sampled positions per prompt for the per-position estimator
     max_questions: int | None
     row_batch: int
     lrsd_arms: list
@@ -82,13 +85,16 @@ def load_config(env_file=None):
         jlens_prompts_per_half=int(_get("JLENS_PROMPTS_PER_HALF", "100")),
         jlens_max_seq_len=int(_get("JLENS_MAX_SEQ_LEN", "128")),
         jlens_dim_batch=int(_get("JLENS_DIM_BATCH", "16")),
-        ridge_grid=_floats(_get("RIDGE_GRID", "0.1,0.03,0.01,0.003")),
+        ridge_grid=_floats(_get("RIDGE_GRID", "1,0.3,0.1,0.03,0.01,0.003")),
         ridge_tau=float(_get("RIDGE_TAU", "0.3")),
         ridge_questions=int(_get("RIDGE_QUESTIONS", "48")),
         transports=_names(_get("TRANSPORTS", "copy,jlens,noise_copy,noise_jlens,norm")),
+        transports_pp=_names(_get("TRANSPORTS_PP", "jlens_pp,noise_jlens_pp")),
+        jlens_pp_prompts_per_half=int(_get("JLENS_PP_PROMPTS_PER_HALF", "40")),
+        jlens_pp_positions=int(_get("JLENS_PP_POSITIONS", "4")),
         max_questions=int(mq) if mq else None,
         row_batch=int(_get("ROW_BATCH", "24")),
-        lrsd_arms=_names(_get("LRSD_ARMS", "lrsd,jlrsd")),
+        lrsd_arms=_names(_get("LRSD_ARMS", "lrsd,jlrsd,lrsd01,jlrsd01")),
         lrsd_pair=_get("LRSD_PAIR", "auto"),
         phases=_names(_get("PHASES", "")),
     )
