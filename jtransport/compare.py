@@ -12,12 +12,16 @@ state differently could score differently by chance, so this module also reports
 Statistics are per unique question, counting a question correct if it matches any of its gold answers (the
 "1toN" convention of distill/train_inject_lrsd.py), because rows of the same question are not independent.
 """
+import logging
+
 import numpy as np
 
 from jtransport.paths import use_repo_modules
 
 use_repo_modules()
 from common import mcnemar  # noqa: E402  exact two-sided McNemar on paired booleans (distill/common.py)
+
+log = logging.getLogger(__name__)
 
 
 def question_em(arr, qid):
@@ -104,14 +108,19 @@ def summarize(grids, qid, lrsd_pair, n_boot=10000, seed=0):
         emq = question_em(arr, qid)
         failed = ~emq[:, 0, 0]
         if failed_ref is None:
-            failed_ref = failed
-        elif not np.array_equal(failed, failed_ref):  # same model, same prompts => identical unpatched answers
-            raise ValueError(f"arm {arm}: unpatched (diagonal) results differ from the first arm")
-        cv = cv_top_cell(emq, failed, seed=seed)
+            failed_ref = failed  # the first arm's unpatched answers define the failed set for every contrast
+        st["no_patch_mismatch_q"] = int((failed != failed_ref).sum())  # batch-shape numerics can flip near-ties
+        if st["no_patch_mismatch_q"]:
+            log.warning("arm %s: unpatched result differs from the first arm on %d questions (near-ties)", arm,
+                        st["no_patch_mismatch_q"])
+        cv = cv_top_cell(emq, failed_ref, seed=seed)
         st["cv_top_cell"] = cv
         st["cv_cell_flips"] = [net_flips(emq, *c) for c in cv["cells"]]
         st["lrsd_pair"] = net_flips(emq, *lrsd_pair)
-        masks[arm] = st.pop("rescued_mask")[failed]  # rescued indicator per failed question
+        st.pop("rescued_mask")
+        off = emq.copy()
+        off[:, np.arange(off.shape[1]), np.arange(off.shape[1])] = False  # a rescue needs a real (off-diagonal) patch
+        masks[arm] = off.reshape(len(off), -1).any(1)[failed_ref]  # rescued indicator per (reference) failed question
         arms[arm] = st
     contrasts = {}
 

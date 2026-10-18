@@ -85,3 +85,10 @@ def test_summarize_reports_arms_contrasts_and_mcnemar():
     assert c["jlens_minus_copy"]["mean"] == 0.5  # over the 2 failed questions
     assert c["copy_minus_noise_copy"]["mean"] == 0.5 and c["jlens_minus_noise_jlens"]["mean"] == 1.0
     assert c["mcnemar_copy_vs_jlens"]["n01"] == 1 and c["mcnemar_copy_vs_jlens"]["n10"] == 0
+
+
+def test_summarize_tolerates_a_near_tie_flip_of_the_unpatched_answer():
+    flipped = _grid([{}, {}, {(2, 0): 1}, {}])  # q0's no-patch answer flipped to wrong in this arm only
+    s = summarize({"copy": GRID, "jlens": flipped}, QID, lrsd_pair=(2, 1), n_boot=50, seed=0)
+    assert s["arms"]["jlens"]["no_patch_mismatch_q"] == 1  # reported, not fatal
+    assert s["contrasts"]["jlens_minus_copy"]["n"] == 2  # contrasts use the first arm's failed set
