@@ -103,3 +103,21 @@ def test_summarize_tolerates_a_near_tie_flip_of_the_unpatched_answer():
     s = summarize({"copy": GRID, "jlens": flipped}, QID, lrsd_pair=(2, 1), n_boot=50, seed=0)
     assert s["arms"]["jlens"]["no_patch_mismatch_q"] == 1  # reported, not fatal
     assert s["contrasts"]["jlens_minus_copy"]["n"] == 2  # contrasts use the first arm's failed set
+
+
+def test_summarize_lrsd_reads_evaluated_epochs_only(tmp_path):
+    import json
+
+    from jtransport.compare_lrsd import summarize_lrsd
+    for arm, ems, oks in (("baseline", [0.0, 0.1, 0.2], [0, 1]), ("lrsd", [0.0, 0.3, 0.4], [1, 1])):
+        d = tmp_path / arm
+        d.mkdir()
+        recs = [{"epoch": -1, "questions": ["q1", "q2"]}]
+        for e, em in zip((0, 10, 20), ems):
+            recs.append({"epoch": e, "chain_uq_em": em, "chain_ok": oks, "mem_em": 0.9})
+            recs.append({"epoch": e + 1, "train_ce": 1.0})  # --eval_every > 1: loss-only record, must be skipped
+        (d / "log.jsonl").write_text("\n".join(json.dumps(r) for r in recs))
+    s = summarize_lrsd({"baseline": str(tmp_path / "baseline"), "lrsd": str(tmp_path / "lrsd")})
+    assert s["arms"]["lrsd"]["final_em"] == 0.4 and s["arms"]["lrsd"]["curve_epochs"] == [0, 10, 20]
+    assert abs(s["arms"]["baseline"]["mean_em_from10"] - 0.15) < 1e-12  # epochs 10 and 20
+    assert s["tests"]["lrsd_vs_baseline"]["n01"] == 1  # q1 correct only with lrsd
