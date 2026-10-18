@@ -1,5 +1,62 @@
 # Mem2Gen: Why Memorized Knowledge Fails to Generalize in LLM Fine-tuning
 
+> **This fork adds the J-lens transport experiments** (section [J-lens transport between layers](#j-lens-transport-between-layers-this-fork) below). The question is whether the paper's cross-layer copies work better if the residual state is moved into the target layer's coordinates with the Jacobian lens, instead of being copied raw. The rest of this README is the paper's release documentation.
+
+## J-lens transport between layers (this fork)
+
+**Question.** The paper moves residual states between layers in two places:
+- the self-patching oracle, which writes `h_s` into layer `t` at the head-entity tokens;
+- LRSD, which pulls `h^t` toward `sg(h^s)` during fine-tuning.
+
+Both assume every layer shares one coordinate system. The [J-lens](https://transformer-circuits.pub/2026/workspace/index.html) ([code](https://github.com/anthropics/jacobian-lens)) shows that this is not so. It fits `J_l = E[∂h_final/∂h_l]`, which maps a layer-`l` state into the final layer's basis, and early layers only read out correctly after that map.
+
+**Method.** Both experiments run on Qwen2.5-0.5B-Instruct, which fits an 8 GB GPU, with the paper's 1000-fact injection recipe:
+1. **Self-patching.** The paper's raw `copy` is compared with a J-lens transport `x = h_t + R_t (J_s h_s − J_t h_t)`, where `R_t` is a ridge inverse of `J_t`. This equals `pinv(J_t) J_s h_s`, the state whose J-lens readout at layer `t` matches `h_s`'s readout at layer `s`. Controls: matched-magnitude random perturbations (`noise_copy`, `noise_jlens`) and a scale-only fix (`norm`). The paper's oracle is reported, plus a cross-validated single layer pair and paired bootstrap CIs.
+2. **LRSD.** The paper's raw-coordinate loss is compared with a J-space loss `relMSE(J_t h^t, sg(J_s h^s))`, alongside the λ = 0 baseline.
+
+Details, statistics and sources are in [docs/jtransport.md](docs/jtransport.md). Results and interpretation are in [results/jtransport/REPORT.md](results/jtransport/REPORT.md).
+
+**Quick start** (Linux + NVIDIA GPU with ≥ 8 GB, [uv](https://docs.astral.sh/uv/)):
+
+```bash
+git clone https://github.com/BurnyCoder/jacobian-mem2gen.git Mem2Gen && cd Mem2Gen
+uv sync                                   # .venv with torch 2.13 (CUDA 13), transformers 5.11, TransformerLens 3.9, jlens
+cp .env.example .env                      # every setting, with comments; defaults reproduce the reported run
+uv run pytest -m "not gpu"                # CPU unit tests (~30 s); `uv run pytest -m gpu` checks the kernels on the GPU
+uv run python -m jtransport.run_experiment   # all phases, resumable; log in logs/<timestamp>_run_experiment.log
+```
+
+For a toy run of every phase in about 30 min, override settings through the environment: `EPOCHS=1 MAX_QUESTIONS=3 JLENS_PROMPTS_PER_HALF=2 RIDGE_QUESTIONS=3 OUT_ROOT=experiment_logs/jtransport_toy RESULTS_DIR=experiment_logs/jtransport_toy/results uv run python -m jtransport.run_experiment`. `PHASES=compare` re-runs a single phase.
+
+**What happens when you run it.** `jtransport/run_experiment.py` runs eight phases in order. Each phase skips work whose output already exists.
+
+```mermaid
+flowchart LR
+  D[data/multi_fact_data_template<br/>chaining_tasks.json] -->|make_data| S[data/inject_lrsd/<br/>chaining_qwen_seed848]
+  S -->|finetune_baseline<br/>LoRA, λ=0, 50 epochs| A[adapter_epoch50]
+  A -->|fit_lens_finetuned<br/>jlens.fit on pile-10k halves| JF[J-lens of fine-tuned model]
+  A --> G
+  JF -->|split-half ridge c| G[patch_grids<br/>copy · jlens · noise_copy · noise_jlens · norm]
+  S --> G
+  G -->|compare| R1[results/jtransport/exp1*]
+  B[base model] -->|fit_lens_base| JB[J-lens of base model]
+  JB -->|train_lrsd_arms<br/>lrsd · jlrsd| T[LRSD runs]
+  S --> T
+  A -. baseline arm .-> R2
+  T -->|compare_lrsd| R2[results/jtransport/exp2*]
+```
+
+1. **`make_data`** writes the paper's seeded 1000-fact sample: 500 two-hop rows, 409 unique questions.
+2. **`finetune_baseline`** injects the facts with LoRA (`distill/train_inject_lrsd.py`, λ = 0) and evaluates two-hop accuracy after every epoch.
+3. **`fit_lens_finetuned`** fits the J-lens of the fine-tuned model with `jlens.fit` on two disjoint halves of NeelNanda/pile-10k.
+4. **`patch_grids`** first picks the ridge strength from the two halves without looking at answers. Then, for every question, target layer and arm, it patches all source layers in one batched pass. It records the first-answer-token rank and the greedy exact match, in the paper's `(N, 2, L, L)` grid format.
+5. **`compare`** writes the oracle, controls, CIs and figures.
+6. **`fit_lens_base`**, **`train_lrsd_arms`** and **`compare_lrsd`** repeat the training with the paper's LRSD loss and with the J-space loss, then compare the two-hop accuracy of all three arms.
+
+Code layout: `jtransport/` holds the extension. The paper's code is reused, with two small flagged additions: `qwen2.5-0.5b` in `distill/common.MODELS`, and `--target jspace` in `distill/train_inject_lrsd.py`. Working notes for contributors are in [AGENTS.md](AGENTS.md).
+
+---
+
 Code and data for the paper **"Towards Mechanistically Understanding Why Memorized Knowledge Fails to Generalize in Large Language Model Finetuning"**.
 
 <p align="center">
