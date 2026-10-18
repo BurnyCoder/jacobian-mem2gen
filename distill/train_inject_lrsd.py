@@ -60,10 +60,13 @@ def main():
                     help="entity = head-entity span (paper); ablations: pre_entity / post_entity = the same number of "
                          "tokens right before / after it (post-entity states do depend on the entity); "
                          "last = the last prompt token, where the answer is produced")
-    ap.add_argument("--target", default="self", choices=["self", "self_pool", "donor_pool"],
+    ap.add_argument("--target", default="self", choices=["self", "self_pool", "donor_pool", "jspace"],
                     help="self: per-token sg(h^s[E]) (paper); ablations: self_pool: every E token -> sg(mean_E h^s); "
                          "donor_pool: every E token -> sg(mean h^s over a FIXED other training item's entity span) "
-                         "(knowledge-free control with the same loss statistics)")
+                         "(knowledge-free control with the same loss statistics); "
+                         "jspace: compare in the J-lens basis, relMSE(J_t h^t[E], sg(J_s h^s[E])) (needs --lens)")
+    ap.add_argument("--lens", default=None,
+                    help="jspace only: J-lens file (jlens.JacobianLens.save, e.g. written by jtransport/lens.py)")
     ap.add_argument("--seed", type=int, default=848)
     ap.add_argument("--epochs", type=int, default=50)
     ap.add_argument("--bs", type=int, default=10)
@@ -87,6 +90,12 @@ def main():
         L = model.config.num_hidden_layers
         args.pair = f"{round(0.75 * L)}-{round(0.5 * L)}"
     s_l, t_l = (int(x) for x in args.pair.split("-"))
+    if args.target == "jspace":  # J-lens extension: fixed J_s, J_t (fitted on the base model) map both states to the
+        from jlens import JacobianLens  # shared final-layer basis (https://github.com/anthropics/jacobian-lens)
+        if not args.lens:
+            sys.exit("--target jspace needs --lens")
+        jl = JacobianLens.load(args.lens).jacobians  # {layer: [d, d]}, J_l = E[d h_final / d h_l]
+        J_s, J_t = jl[s_l].cuda(), jl[t_l].cuda()
     json.dump(vars(args), open(os.path.join(args.out_dir, "args.json"), "w"), indent=1)
     model = get_peft_model(model, LoraConfig(r=8, lora_alpha=32, lora_dropout=0.05, target_modules=LORA_TARGETS,
                                              task_type="CAUSAL_LM"))
@@ -271,6 +280,9 @@ def main():
                         tgt = tap.h[s_l][r, x["tspan"]].detach()
                     elif args.target == "self_pool":
                         tgt = tap.h[s_l][r, x["tspan"]].detach().float().mean(0, keepdim=True).expand(len(x["tspan"]), -1)
+                    elif args.target == "jspace":  # readouts in the J-lens basis: J_t h^t vs sg(J_s h^s) (row vectors)
+                        stu = stu.float() @ J_t.T  # gradient flows through the fixed J_t into h^t
+                        tgt = tap.h[s_l][r, x["tspan"]].detach().float() @ J_s.T
                     else:
                         tgt = donor_h[k_d].unsqueeze(0).expand(len(x["tspan"]), -1)
                         k_d += 1
