@@ -120,6 +120,26 @@ def test_last_column_cannot_change_the_answer(model, question):
     torch.testing.assert_close(ours, base.expand_as(ours), atol=1e-4, rtol=1e-5)
 
 
+def test_per_position_estimator_equals_jlens_when_one_position_is_valid():
+    """With a single valid position p, jlens' sum over p' >= p IS the same-position Jacobian d h_final[p]/d h_l[p]."""
+    import jlens
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    from jtransport.lens import per_position_jacobian_for_prompt
+    hf = AutoModelForCausalLM.from_pretrained(BASE, dtype=torch.float32, device_map="cuda")
+    m = jlens.from_hf(hf, AutoTokenizer.from_pretrained(BASE))
+    text = "The capital of the country where Sydney is located is Canberra, and its currency is the dollar."
+    T = m.encode(text, max_length=24).shape[1]
+    skip = T - 2  # valid positions = [skip, T - 1) = one position
+    ref, _, _ = jlens.jacobian_for_prompt(m, text, [10, 20], max_seq_len=24, skip_first=skip, dim_batch=64)
+    pp = per_position_jacobian_for_prompt(m, text, [10, 20], positions=1, max_seq_len=24, skip_first=skip,
+                                          dim_batch=64)
+    for l in (10, 20):
+        torch.testing.assert_close(pp[l], ref[l], atol=1e-4, rtol=1e-4)
+    del hf, m
+    torch.cuda.empty_cache()
+
+
 def test_jlens_fit_runs_and_has_d_by_d_jacobians():
     import jlens
     from transformers import AutoModelForCausalLM, AutoTokenizer
