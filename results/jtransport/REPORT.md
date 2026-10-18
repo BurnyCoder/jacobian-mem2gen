@@ -75,7 +75,14 @@ How to read these results:
 
 All arms use the same injection recipe and seed (848) and the pair (s, t) = (18, 12). The J-space loss uses the base model's J-lens. Two-hop exact match is measured on the 409 unique questions (any gold answer), every 5 epochs:
 
-LAMBDA_TABLE
+| arm | λ | final EM | mean EM, epochs 10–50 | best EM | memorization (final) |
+|---|---|---|---|---|---|
+| baseline (no LRSD) | 0 | 6.6% | 5.4% | 8.1% | 98.1% |
+| LRSD (paper, raw coordinates) | 1 | 8.3% | 9.8% | 11.2% | 97.9% |
+| J-space LRSD | 1 | 9.3% | 8.6% | 10.8% | 99.0% |
+| LRSD / J-space LRSD | 0.1 | *training* | | | |
+
+Exact McNemar on final per-question correctness: LRSD vs baseline 17/10 (p = 0.25); J-space LRSD vs baseline 27/16 (p = 0.13); J-space LRSD vs LRSD 26/22 (p = 0.67). Each pair counts the questions only the second / only the first arm answers.
 
 ![two-hop accuracy during training](lrsd_curves.png)
 
@@ -112,7 +119,7 @@ This is the prediction in its plainest form: a reliably estimated, geometry-pres
 | Does J-lens transport rescue more failed two-hop answers than the raw copy? | No. It rescues fewer: −5.7 pp, p = 0.0016. Corrected for its smaller perturbation the two are equal: −1.3 pp, CI [−6.5, +3.9]. |
 | Does a same-token Jacobian help? | No. Once it is stable it is a near no-op and equals its noise control. |
 | Does the raw copy itself beat random perturbations of the same size? | Not on the oracle (−9.6 pp). There is a small per-cell MRR edge (+0.004). The paper's restore-oracle is largely a perturbation effect at this scale. |
-| Does J-space LRSD beat LRSD? | No significant difference at λ = 1 (p = 0.67)LAMBDA01_VERDICT. Both beat the baseline in direction; neither is significant with one seed. |
+| Does J-space LRSD beat LRSD? | No significant difference at λ = 1 (p = 0.67); λ = 0.1 still training. Both beat the baseline in direction; neither is significant with one seed. |
 
 The coordinate mismatch the J-lens reveals is real, but correcting for it doesn't help these interventions. Back-patching works, to the extent it works, because later layers re-process a state that has already been through them. Translating the state into the target layer's coordinates removes exactly that.
 
