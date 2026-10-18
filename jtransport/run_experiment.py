@@ -9,6 +9,8 @@ self-patching oracle; experiment 2 compares LRSD with a J-space LRSD loss. See R
 import logging
 import time
 
+# Note: PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True is NOT set: under WSL2 it fails with
+# "CUDA driver error: out of memory" in the training subprocess (observed on the RTX 5070 laptop).
 from jtransport.config import load_config
 from jtransport.log import setup_logging
 from jtransport.phases import PHASES
