@@ -56,6 +56,7 @@ def _train(cfg, arm, extra):
         return
     run_cmd([sys.executable, os.path.join(DISTILL_DIR, "train_inject_lrsd.py"), "--model", cfg.model,
              "--seed", str(cfg.seed), "--epochs", str(cfg.epochs), "--save_epochs", str(cfg.epochs),
+             "--eval_every", str(cfg.eval_every),
              "--out_dir", out, *extra], cwd=REPO)
 
 
@@ -73,7 +74,7 @@ def finetune_baseline(cfg):
 def fit_lens_finetuned(cfg):
     from jtransport.lens import fit_lens
     fit_lens(cfg.base_model, adapter(cfg), os.path.join(cfg.out_root, "lens_finetuned"), cfg.jlens_corpus,
-             cfg.jlens_prompts_per_half, cfg.jlens_max_seq_len, cfg.jlens_dim_batch, cfg.device, cfg.seed)
+             cfg.jlens_prompts_per_half, cfg.jlens_max_seq_len, cfg.jlens_dim_batch, cfg.device, cfg.seed, cfg.tf32)
 
 
 def patch_grids(cfg):
@@ -114,7 +115,7 @@ def compare(cfg):
 def fit_lens_base(cfg):
     from jtransport.lens import fit_lens
     fit_lens(cfg.base_model, None, os.path.join(cfg.out_root, "lens_base"), cfg.jlens_corpus,
-             cfg.jlens_prompts_per_half, cfg.jlens_max_seq_len, cfg.jlens_dim_batch, cfg.device, cfg.seed)
+             cfg.jlens_prompts_per_half, cfg.jlens_max_seq_len, cfg.jlens_dim_batch, cfg.device, cfg.seed, cfg.tf32)
 
 
 def train_lrsd_arms(cfg):
