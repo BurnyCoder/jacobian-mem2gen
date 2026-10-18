@@ -72,6 +72,9 @@ def main():
     ap.add_argument("--bs", type=int, default=10)
     ap.add_argument("--lr", type=float, default=1e-4)
     ap.add_argument("--mem_every", type=int, default=5)
+    ap.add_argument("--eval_every", type=int, default=1,
+                    help="two-hop evaluation every N epochs (and at the last); 1 = every epoch (paper). Memorization "
+                         "is evaluated at epochs that are multiples of both --eval_every and --mem_every, and at the end")
     ap.add_argument("--save_epochs", default="50", help="comma-separated epochs whose adapter is saved ('' = none)")
     ap.add_argument("--out_dir", required=True)
     args = ap.parse_args()
@@ -304,7 +307,10 @@ def main():
             acc["lrsd"] += lr_val
             acc["n"] += 1
         e = ep + 1
-        rec = evaluate(e, full_mem=(e % args.mem_every == 0 or e == args.epochs))
+        if e % args.eval_every and e != args.epochs:  # --eval_every > 1: training-loss-only record this epoch
+            rec = dict(epoch=e)
+        else:
+            rec = evaluate(e, full_mem=(e % args.mem_every == 0 or e == args.epochs))
         rec.update(train_ce=acc["ce"] / acc["n"], train_lrsd=acc["lrsd"] / acc["n"], step=step,
                    elapsed_min=round((time.time() - t_start) / 60, 1))
         log(rec)

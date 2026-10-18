@@ -60,7 +60,7 @@ def lrsd_curves(summary, path):
     """Two-hop exact match per epoch for each training arm."""
     fig, ax = plt.subplots(figsize=(5, 3.4))
     for arm, st in summary["arms"].items():
-        ax.plot(range(len(st["curve"])), st["curve"], label=arm)
+        ax.plot(st["curve_epochs"], st["curve"], marker="o", ms=3, label=arm)
     ax.set_xlabel("epoch")
     ax.set_ylabel("two-hop exact match (unique questions)")
     ax.legend()
