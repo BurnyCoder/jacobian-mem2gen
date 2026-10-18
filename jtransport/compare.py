@@ -53,6 +53,34 @@ def rescue_stats(arr, qid):
     }
 
 
+def mrr_gain(arr, qid, failed):
+    """Per failed question: mean change of the first-answer-token reciprocal rank over off-diagonal cells, overall and
+    split into back-patching (s > t, later state into an earlier layer) and forward patching (s < t).
+
+    Local: question-level MRR = max over the question's rows (gold answers) of channel 0; gain = cell - cell (0, 0).
+    Global context: a continuous, all-cells measure that, unlike the best-of-L^2 oracle, is not inflated by a few lucky
+    cells; the paper's account predicts gains concentrated at s > t for an informative patch, none for random noise.
+    Returns {"all": [Qf], "back": [Qf], "forward": [Qf]} arrays aligned with the failed questions.
+    """
+    mrr = arr[:, 0]  # [N, L, L]
+    uq = np.unique(qid)
+    mq = np.stack([mrr[qid == q].max(0) for q in uq])[failed]  # [Qf, L, L]
+    gain = mq - mq[:, :1, :1]  # relative to the unpatched cell
+    L = gain.shape[1]
+    s_idx, t_idx = np.meshgrid(np.arange(L), np.arange(L), indexing="ij")  # [s, t] index grids
+    return {"all": gain[:, s_idx != t_idx].mean(1), "back": gain[:, s_idx > t_idx].mean(1),
+            "forward": gain[:, s_idx < t_idx].mean(1)}
+
+
+def backpatch_share(emq, failed):
+    """Fraction of rescuing (off-diagonal, exact-match) cells of failed questions that are back-patches (s > t)."""
+    L = emq.shape[1]
+    s_idx, t_idx = np.meshgrid(np.arange(L), np.arange(L), indexing="ij")
+    cells = emq[failed]
+    n_back, n_fwd = int(cells[:, s_idx > t_idx].sum()), int(cells[:, s_idx < t_idx].sum())
+    return n_back / max(n_back + n_fwd, 1)
+
+
 def net_flips(emq, s, t):
     """At one fixed layer pair (s -> t): rescued failed questions, broken correct questions, and the difference."""
     base = emq[:, 0, 0]
@@ -102,7 +130,7 @@ def summarize(grids, qid, lrsd_pair, n_boot=10000, seed=0):
 
     Returns {"arms": {arm: stats}, "contrasts": {...}} (JSON-serialisable except nothing: masks are dropped).
     """
-    arms, masks, failed_ref = {}, {}, None
+    arms, masks, gains, failed_ref = {}, {}, {}, None
     for arm, arr in grids.items():
         st = rescue_stats(arr, qid)
         emq = question_em(arr, qid)
@@ -118,6 +146,9 @@ def summarize(grids, qid, lrsd_pair, n_boot=10000, seed=0):
         st["cv_cell_flips"] = [net_flips(emq, *c) for c in cv["cells"]]
         st["lrsd_pair"] = net_flips(emq, *lrsd_pair)
         st.pop("rescued_mask")
+        gains[arm] = mrr_gain(arr, qid, failed_ref)
+        st["mrr_gain"] = {k: float(v.mean()) for k, v in gains[arm].items()}  # mean over failed questions
+        st["backpatch_share"] = backpatch_share(emq, failed_ref)
         off = emq.copy()
         off[:, np.arange(off.shape[1]), np.arange(off.shape[1])] = False  # a rescue needs a real (off-diagonal) patch
         masks[arm] = off.reshape(len(off), -1).any(1)[failed_ref]  # rescued indicator per (reference) failed question
@@ -130,6 +161,11 @@ def summarize(grids, qid, lrsd_pair, n_boot=10000, seed=0):
     for m in ("copy", "jlens", "norm"):
         if m in masks and f"noise_{m}" in masks:
             contrasts[f"{m}_minus_noise_{m}"] = boot(m, f"noise_{m}")  # gain over the same-size random perturbation
+    for a, b in (("copy", "noise_copy"), ("jlens", "noise_jlens"), ("jlens", "copy")):  # continuous MRR contrasts
+        if a in gains and b in gains:
+            for k in ("all", "back"):
+                contrasts[f"mrr_gain_{k}_{a}_minus_{b}"] = paired_bootstrap(gains[a][k], gains[b][k], n_boot=n_boot,
+                                                                           seed=seed)
     if "copy" in masks and "jlens" in masks:
         contrasts["jlens_minus_copy"] = boot("jlens", "copy")
         n01, n10, p = mcnemar(masks["copy"], masks["jlens"])  # n01: only jlens rescues, n10: only copy rescues

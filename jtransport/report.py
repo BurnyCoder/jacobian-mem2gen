@@ -74,12 +74,14 @@ def _pct(x):
 
 def exp1_table(summary):
     """Markdown table of the arms and the contrasts."""
-    lines = ["| arm | no-patch (q) | oracle (q) | rescued of failed | CV single pair (held-out) | LRSD pair net flips |",
-             "|---|---|---|---|---|---|"]
+    lines = ["| arm | no-patch (q) | oracle (q) | rescued of failed | rescuing cells / failed q | share s>t "
+             "| mean dMRR (all / s>t) | CV single pair (held-out) | LRSD pair net flips |",
+             "|---|---|---|---|---|---|---|---|---|"]
     for arm, st in summary["arms"].items():
-        lp = st["lrsd_pair"]
+        lp, g = st["lrsd_pair"], st["mrr_gain"]
         lines.append(f"| {arm} | {_pct(st['no_patch_q'])} | {_pct(st['oracle_q'])} | {_pct(st['rescued_q'])} "
-                     f"({st['n_failed_q']} failed) | {_pct(st['cv_top_cell']['held_out_rescue'])} "
+                     f"({st['n_failed_q']} failed) | {st['cells_per_failed_q']:.1f} | {_pct(st['backpatch_share'])} "
+                     f"| {g['all']:+.4f} / {g['back']:+.4f} | {_pct(st['cv_top_cell']['held_out_rescue'])} "
                      f"{st['cv_top_cell']['cells']} | +{lp['rescues']} / -{lp['harms']} = {lp['net']:+d} |")
     lines += ["", "| contrast (per failed question) | mean | 95% CI |", "|---|---|---|"]
     for k, v in summary["contrasts"].items():
