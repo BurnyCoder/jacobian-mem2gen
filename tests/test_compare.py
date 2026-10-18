@@ -8,8 +8,8 @@ Run: uv run pytest tests/test_compare.py
 """
 import numpy as np
 
-from jtransport.compare import (cv_top_cell, net_flips, paired_bootstrap, question_em, rescue_stats,
-                                summarize)
+from jtransport.compare import (backpatch_share, cv_top_cell, mrr_gain, net_flips, paired_bootstrap, question_em,
+                                rescue_stats, summarize)
 
 L = 3  # layers in the toy grids
 
@@ -46,6 +46,17 @@ def test_rescue_stats_counts_failed_questions_rescued_by_any_off_diagonal_cell()
     assert st["no_patch_row"] == 0.25 and st["oracle_row"] == 0.5  # paper-compatible row-level numbers
     assert np.array_equal(st["rescued_mask"], [False, True, False])  # per question, aligned with unique qids
     assert st["cells_per_failed_q"] == 0.5  # (1 cell + 0 cells) / 2 failed questions
+
+
+def test_mrr_gain_and_backpatch_share():
+    arr = np.zeros((2, 2, L, L))
+    arr[:, 0] = 0.1  # baseline reciprocal rank 0.1 everywhere
+    arr[0, 0, 2, 0] = 1.0  # question 0: back-patch (s=2 > t=0) lifts the answer to rank 1
+    arr[0, 1, 2, 0] = 1.0
+    qid = np.array([0, 1])
+    g = mrr_gain(arr, qid, np.array([True, True]))
+    assert np.isclose(g["back"][0], 0.9 / 3) and g["forward"][0] == 0 and g["all"][1] == 0  # 3 cells with s > t
+    assert backpatch_share(question_em(arr, qid), np.array([True, True])) == 1.0
 
 
 def test_net_flips_counts_rescues_minus_harms_at_one_cell():
