@@ -83,11 +83,13 @@ def load_questions(data_dir, model, tokenizer, max_questions=None):
 
 # ----------------------------------------------------------------------------------------------------------- kernels
 @torch.no_grad()
-def clean_states(model, tokens, positions):
-    """H[l] = blocks.l.hook_resid_post at `positions` for all layers ([L, P, d]) and the clean last-position logits."""
+def clean_states(model, tokens, positions, full=False):
+    """H[l] = blocks.l.hook_resid_post at `positions` for all layers ([L, P, d]) and the clean last-position logits;
+    with full=True also the whole residual stream R[l] ([L, T, d]) used to restart the forward pass at layer t+1."""
     logits, cache = model.run_with_cache(tokens, names_filter=lambda n: n.endswith("hook_resid_post"))
-    H = torch.stack([cache[f"blocks.{l}.hook_resid_post"][0, positions] for l in range(model.cfg.n_layers)])
-    return H, logits[0, -1]
+    R = torch.stack([cache[f"blocks.{l}.hook_resid_post"][0] for l in range(model.cfg.n_layers)])  # [L, T, d]
+    H = R[:, positions]  # [L, P, d]
+    return (H, logits[0, -1], R) if full else (H, logits[0, -1])
 
 
 def _patch_hook(X, positions):
@@ -113,18 +115,56 @@ def patched_last_logits(model, tokens, t, positions, X, past_kv_cache=None):
     return model.unembed(model.ln_final(resid[:, -1:, :]))[:, 0]  # same path as forward() for Qwen2 (no softcap)
 
 
+@torch.no_grad()
+def patched_last_logits_from(model, resid_t, t, positions, X):
+    """Same as patched_last_logits, but restarts from the clean residual after block t ([T, d]) instead of re-running
+    blocks 0..t: the patch only changes layer t's output, so blocks 0..t are identical to the clean pass.
+    HookedTransformer.forward(start_at_layer=t+1) takes the residual stream as input (TL docs: 'start_at_layer ...
+    input is assumed to be the residual stream'); roughly halves the grid's compute on average over t."""
+    r = resid_t.expand(X.shape[0], -1, -1).clone()  # [B, T, d] one copy per row
+    if positions:
+        r[:, positions, :] = X.to(r.dtype)  # write the transported states at the entity tokens
+    if t + 1 < model.cfg.n_layers:
+        r = model(r, start_at_layer=t + 1, stop_at_layer=model.cfg.n_layers)  # blocks t+1..L-1 only
+    return model.unembed(model.ln_final(r[:, -1:, :]))[:, 0]
+
+
 def ranks_of(logits, ids):
     """1-based rank of each token id in each row's logits ([B, V] x [K] -> [B, K]); rank 1 = argmax."""
     tgt = logits[:, ids]  # [B, K] logit of each answer's first token
     return (logits[:, None, :] > tgt[:, :, None]).sum(-1) + 1  # number of strictly larger logits + 1
 
 
+def _rows_hook(X, rows, positions):
+    """Hook writing X[i] into batch row rows[i] at `positions` (one target layer, a subset of the batch)."""
+    r = torch.tensor(rows)[:, None]  # [R, 1] batch indices
+    p = torch.tensor(positions)[None, :]  # [1, P] token indices
+
+    def hook(act, hook):
+        if act.shape[1] > max(positions):  # prefill pass only
+            act[r.to(act.device), p.to(act.device), :] = X.to(act.dtype)
+        return act
+    return hook
+
+
 @torch.no_grad()
 def patched_greedy(model, tokens, t, positions, X, eos_id, max_new_tokens=MAX_NEW_TOKENS):
-    """Greedy continuation per row with the patch, as text (cut at the first EOS, like the paper's generator)."""
+    """Greedy continuation per row with the patch, as text (cut at the first EOS, like the paper's generator).
+
+    `t` is one target layer for every row, or a list with each row's own target layer: then one hook per distinct
+    target layer writes only its rows, so cells of many target layers are decoded in one batch.
+    """
     B = X.shape[0]
+    targets = list(t) if isinstance(t, (list, tuple)) else [t] * B
+    by_t = {}
+    for b, tt in enumerate(targets):
+        by_t.setdefault(tt, []).append(b)
+    hooks = [(f"blocks.{tt}.hook_resid_post", _rows_hook(X[rows], rows, positions)) for tt, rows in by_t.items()] \
+        if positions else []
     cache = TransformerLensKeyValueCache.init_cache(model.cfg, model.cfg.device, B)  # per-layer K/V of B rows
-    nxt = patched_last_logits(model, tokens, t, positions, X, past_kv_cache=cache).argmax(-1)  # patched prefill
+    resid = model.run_with_hooks(tokens.expand(B, -1), fwd_hooks=hooks, stop_at_layer=model.cfg.n_layers,
+                                 past_kv_cache=cache)  # patched prefill fills the KV cache of every layer
+    nxt = model.unembed(model.ln_final(resid[:, -1:, :]))[:, 0].argmax(-1)
     steps, done = [nxt], nxt == eos_id
     for _ in range(max_new_tokens - 1):
         if bool(done.all()):
@@ -141,25 +181,32 @@ def patched_greedy(model, tokens, t, positions, X, eos_id, max_new_tokens=MAX_NE
     return out
 
 
-def question_grid(model, q, arms, row_batch, eos_id):
-    """(rows, 2, L, L) grid of one question for every arm."""
+def question_grid(model, q, arms, row_batch, eos_id, gen_batch=96):
+    """(rows, 2, L, L) grid of one question for every arm.
+
+    Per arm: one rank pass per target layer t (all L source rows, restarted at block t+1), then ONE batched greedy
+    decode over every cell whose first answer token ranks 1 for some gold answer, across all target layers.
+    """
     L = model.cfg.n_layers
-    H, base_logits = clean_states(model, q["tokens"], q["positions"] or [0])  # [0] keeps shapes valid if no span
+    H, base_logits, R = clean_states(model, q["tokens"], q["positions"] or [0], full=True)  # [0]: valid shapes
     out = {arm: np.zeros((len(q["rows"]), 2, L, L), dtype=np.float32) for arm in arms}
     for arm, T in arms.items():
+        Xs, ranks = {}, {}
         for t in range(L):
-            X = T.apply(H, t, key=q["qid"])  # [L(src), P, d]
-            ranks = torch.cat([ranks_of(patched_last_logits(model, q["tokens"], t, q["positions"], X[i:i + row_batch]),
-                                        q["first_ids"]) for i in range(0, L, row_batch)])  # [L(src), K rows]
-            out[arm][:, 0, :, t] = (1.0 / ranks.float()).T.cpu().numpy()
-            todo = [s for s in range(L) if bool((ranks[s] == 1).any())]  # greedy can only match from rank 1
-            for i in range(0, len(todo), row_batch):
-                chunk = todo[i:i + row_batch]
-                texts = patched_greedy(model, q["tokens"], t, q["positions"], X[chunk], eos_id)
-                for s, text in zip(chunk, texts):
-                    for r, ans in enumerate(q["answers"]):
-                        if int(ranks[s, r]) == 1 and text.strip() == ans.strip():  # paper's exact-match rule
-                            out[arm][r, 1, s, t] = 1.0
+            Xs[t] = T.apply(H, t, key=q["qid"])  # [L(src), P, d]
+            ranks[t] = torch.cat([ranks_of(patched_last_logits_from(model, R[t], t, q["positions"],
+                                                                    Xs[t][i:i + row_batch]), q["first_ids"])
+                                  for i in range(0, L, row_batch)])  # [L(src), K rows]
+            out[arm][:, 0, :, t] = (1.0 / ranks[t].float()).T.cpu().numpy()
+        cells = [(s, t) for t in range(L) for s in range(L) if bool((ranks[t][s] == 1).any())]  # greedy needs rank 1
+        for i in range(0, len(cells), gen_batch):
+            chunk = cells[i:i + gen_batch]
+            X = torch.stack([Xs[t][s] for s, t in chunk])  # [B, P, d] each cell's transported state
+            texts = patched_greedy(model, q["tokens"], [t for _, t in chunk], q["positions"], X, eos_id)
+            for (s, t), text in zip(chunk, texts):
+                for r, ans in enumerate(q["answers"]):
+                    if int(ranks[t][s, r]) == 1 and text.strip() == ans.strip():  # paper's exact-match rule
+                        out[arm][r, 1, s, t] = 1.0
     return out, H, base_logits
 
 
@@ -190,7 +237,10 @@ def run_grids(cfg, data_dir, adapter, lens_dir, out_dir):
     Resumable: per-question results are checkpointed every 10 questions to <out_dir>/partial.npz.
     """
     os.makedirs(out_dir, exist_ok=True)
-    torch.backends.cuda.matmul.allow_tf32 = False  # exact fp32 matmuls, as in the paper's scripts (PyTorch default)
+    # TF32 (cfg.tf32, default on) makes the grid ~1.4x faster on this GPU; measured on 4 questions x 4 arms it changed
+    # the exact-match result of <= 0.02% of cells (same numerics for every arm). TF32=0 gives strict fp32 like the paper.
+    # https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-and-later-devices
+    torch.backends.cuda.matmul.allow_tf32 = cfg.tf32
     model = load_tl(cfg.base_model, adapter, cfg.device)
     L = model.cfg.n_layers
     tokenizer = pin_chat_date(model.tokenizer)

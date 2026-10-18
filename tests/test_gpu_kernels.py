@@ -84,16 +84,30 @@ def test_batched_ranks_match_paper_mrr(model, question):
         torch.testing.assert_close(ours[0], logits[0, prompt_len - 1], atol=2e-3, rtol=1e-4)
 
 
+def test_restart_at_layer_equals_hooked_full_pass(model, question):
+    """patched_last_logits_from (restart at block t+1 from the clean residual) == patching with a hook."""
+    q = question
+    H, _, R = grid.clean_states(model, q["tokens"], q["positions"], full=True)
+    for t in (0, 12, 22, 23):
+        X = Transport("copy").apply(H, t)
+        a = grid.patched_last_logits(model, q["tokens"], t, q["positions"], X)
+        b = grid.patched_last_logits_from(model, R[t], t, q["positions"], X)
+        torch.testing.assert_close(a, b, atol=2e-3, rtol=1e-4)
+        assert torch.equal(grid.ranks_of(a, q["first_ids"]), grid.ranks_of(b, q["first_ids"]))
+
+
 def test_batched_greedy_matches_paper_generator(model, question):
     q = question
     tokens_full, cache = _paper_cache(model, q)
     H, _ = grid.clean_states(model, q["tokens"], q["positions"])
-    for s, t in CELLS[:3]:
+    cells = CELLS[:4]
+    X = torch.stack([Transport("copy").apply(H, t)[s] for s, t in cells])  # one row per cell, mixed target layers
+    ours = grid.patched_greedy(model, q["tokens"], [t for _, t in cells], q["positions"], X,
+                               model.tokenizer.eos_token_id, max_new_tokens=24)  # all cells in ONE batch
+    for (s, t), text in zip(cells, ours):
         gen = cross_layer_self_patch_generate(cache, model, q["tokens"], s, t, q["positions"], max_new_tokens=24)
         paper_text = model.to_string(gen[0][:-1])[len(q["prompt"]):]  # the paper's decode + slice
-        ours = grid.patched_greedy(model, q["tokens"], t, q["positions"], Transport("copy").apply(H, t)[s:s + 1],
-                                   model.tokenizer.eos_token_id, max_new_tokens=24)[0]
-        assert ours.strip() == paper_text.strip(), (s, t, ours, paper_text)
+        assert text.strip() == paper_text.strip(), (s, t, text, paper_text)
 
 
 def test_last_column_cannot_change_the_answer(model, question):
