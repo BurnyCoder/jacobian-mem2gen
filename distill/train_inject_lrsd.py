@@ -223,6 +223,10 @@ def main():
             json.dump([dict(q=u["question"], gold=u["gold"], pred=o) for u, o in zip(uq, out)],
                       open(os.path.join(args.out_dir, "chain_preds_final.json"), "w"))
         model.train()
+        # Release the evaluation's cached blocks (full-vocab logits of gold_logp, KV caches of generate) so the training
+        # allocations fit on small GPUs; on an 8 GB laptop GPU under WSL the cache otherwise spills to shared memory and
+        # training steps run ~6x slower. No effect on results.
+        torch.cuda.empty_cache()
         return rec
 
     logf = open(os.path.join(args.out_dir, "log.jsonl"), "w")
