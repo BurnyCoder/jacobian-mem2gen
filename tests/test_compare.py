@@ -8,8 +8,8 @@ Run: uv run pytest tests/test_compare.py
 """
 import numpy as np
 
-from jtransport.compare import (cv_top_cell, net_flips, paired_bootstrap, question_em, rescue_stats,
-                                summarize)
+from jtransport.compare import (backpatch_share, cv_top_cell, mrr_gain, net_flips, paired_bootstrap, question_em,
+                                rescue_stats, summarize)
 
 L = 3  # layers in the toy grids
 
@@ -46,6 +46,17 @@ def test_rescue_stats_counts_failed_questions_rescued_by_any_off_diagonal_cell()
     assert st["no_patch_row"] == 0.25 and st["oracle_row"] == 0.5  # paper-compatible row-level numbers
     assert np.array_equal(st["rescued_mask"], [False, True, False])  # per question, aligned with unique qids
     assert st["cells_per_failed_q"] == 0.5  # (1 cell + 0 cells) / 2 failed questions
+
+
+def test_mrr_gain_and_backpatch_share():
+    arr = np.zeros((2, 2, L, L))
+    arr[:, 0] = 0.1  # baseline reciprocal rank 0.1 everywhere
+    arr[0, 0, 2, 0] = 1.0  # question 0: back-patch (s=2 > t=0) lifts the answer to rank 1
+    arr[0, 1, 2, 0] = 1.0
+    qid = np.array([0, 1])
+    g = mrr_gain(arr, qid, np.array([True, True]))
+    assert np.isclose(g["back"][0], 0.9 / 3) and g["forward"][0] == 0 and g["all"][1] == 0  # 3 cells with s > t
+    assert backpatch_share(question_em(arr, qid), np.array([True, True])) == 1.0
 
 
 def test_net_flips_counts_rescues_minus_harms_at_one_cell():
@@ -92,3 +103,21 @@ def test_summarize_tolerates_a_near_tie_flip_of_the_unpatched_answer():
     s = summarize({"copy": GRID, "jlens": flipped}, QID, lrsd_pair=(2, 1), n_boot=50, seed=0)
     assert s["arms"]["jlens"]["no_patch_mismatch_q"] == 1  # reported, not fatal
     assert s["contrasts"]["jlens_minus_copy"]["n"] == 2  # contrasts use the first arm's failed set
+
+
+def test_summarize_lrsd_reads_evaluated_epochs_only(tmp_path):
+    import json
+
+    from jtransport.compare_lrsd import summarize_lrsd
+    for arm, ems, oks in (("baseline", [0.0, 0.1, 0.2], [0, 1]), ("lrsd", [0.0, 0.3, 0.4], [1, 1])):
+        d = tmp_path / arm
+        d.mkdir()
+        recs = [{"epoch": -1, "questions": ["q1", "q2"]}]
+        for e, em in zip((0, 10, 20), ems):
+            recs.append({"epoch": e, "chain_uq_em": em, "chain_ok": oks, "mem_em": 0.9})
+            recs.append({"epoch": e + 1, "train_ce": 1.0})  # --eval_every > 1: loss-only record, must be skipped
+        (d / "log.jsonl").write_text("\n".join(json.dumps(r) for r in recs))
+    s = summarize_lrsd({"baseline": str(tmp_path / "baseline"), "lrsd": str(tmp_path / "lrsd")})
+    assert s["arms"]["lrsd"]["final_em"] == 0.4 and s["arms"]["lrsd"]["curve_epochs"] == [0, 10, 20]
+    assert abs(s["arms"]["baseline"]["mean_em_from10"] - 0.15) < 1e-12  # epochs 10 and 20
+    assert s["tests"]["lrsd_vs_baseline"]["n01"] == 1  # q1 correct only with lrsd

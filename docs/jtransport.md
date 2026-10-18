@@ -31,6 +31,7 @@ For every unique two-hop question, every source layer `s` and every target layer
 | `norm` | `h_s · ‖h_t‖ / ‖h_s‖` | scale-only correction |
 | `noise_copy` | `h_t + ‖h_s − h_t‖ · u` | random direction, same perturbation size as `copy` |
 | `noise_jlens` | `h_t + ‖x_jlens − h_t‖ · u` | random direction, same perturbation size as `jlens` |
+| `jlens_pp`, `noise_jlens_pp` | as `jlens` / `noise_jlens`, with the per-position Jacobian (below) | ablation (phases `fit_lens_finetuned_pp`, `patch_grids_pp`) |
 
 Notes on the `jlens` arm:
 
@@ -44,6 +45,11 @@ Notes on the `jlens` arm:
 
 - If `jlens` beats `copy` beyond noise, the result supports the coordinate-mismatch hypothesis.
 - If `jlens` is about equal to its noise control and does no better than `copy`, raw copy succeeds by re-processing the late state, not despite a coordinate bug.
+
+**Ablation: per-position Jacobian.** `jlens` puts the cotangent at every valid position at once, so its gradient at source position `p` is `Σ_{p'≥p} ∂h_final[p']/∂h_l[p]`. That includes how the state at `p` moves the *later* tokens through attention. The self-patching transport keeps the state at its own token, so the ablation fits the same-token Jacobian `E_p[∂h_final[p]/∂h_l[p]]` instead (`lens.per_position_jacobian_for_prompt`):
+- Each backward-pass row carries a one-hot cotangent at a single (output dim, position) pair, and the gradient is read at that same position. By causality this is exact.
+- `JLENS_PP_POSITIONS` positions are sampled per prompt, so each prompt costs that many times a jlens prompt.
+- A GPU test checks that the estimator equals `jlens.jacobian_for_prompt` when only one position is valid.
 
 ### Experiment 2: LRSD in J-lens space
 
@@ -63,7 +69,7 @@ The arms are `baseline` (λ = 0), `lrsd` (the paper's loss, λ = 1) and `jlrsd` 
 | file | what |
 |---|---|
 | `jtransport/run_experiment.py` | wrapper: loads `.env`, writes a timestamped log, runs the phases |
-| `jtransport/phases.py` | the eight resumable phases (see the README for the data flow) |
+| `jtransport/phases.py` | the resumable phases: the eight of the README's data flow, plus the ablation phases `fit_lens_finetuned_pp`, `patch_grids_pp` and `compare_all` |
 | `jtransport/lens.py` | `jlens.fit` on two corpus halves, merged, saved fp32; per-layer spectra |
 | `jtransport/transport.py` | the five arms, the ridge inverse, split-half ridge selection |
 | `jtransport/grid.py` | batched multi-arm self-patching grid with the paper's data indexing and output format |
@@ -93,8 +99,8 @@ The grid is a faster, multi-arm version of `patch/multi_fact_experiment_nsamples
 | path | content |
 |---|---|
 | `experiment_logs/jtransport/train/inject_*` | training runs: `log.jsonl`, `adapter_epoch50/` |
-| `experiment_logs/jtransport/lens_{finetuned,base}/` | `lens.pt`, `lens_A.pt`, `lens_B.pt`, `spectra.json` |
-| `experiment_logs/jtransport/grids/` | `<arm>.npy` `(N, 2, L, L)`, `meta.json`, `ridge.json`, `diag.json`, `bridge_rank.npy` |
+| `experiment_logs/jtransport/lens_{finetuned,base,finetuned_pp}/` | `lens.pt`, `lens_A.pt`, `lens_B.pt`, `spectra.json` |
+| `experiment_logs/jtransport/grids/` | `<arm>.npy` `(N, 2, L, L)`, `meta.json`, `ridge{,_pp}.json`, `diag.json`, `bridge_rank{,_pp}.npy` |
 | `results/jtransport/` | `exp1.json`, `exp1_tables.md`, `exp2.json`, `exp2_tables.md`, figures, `REPORT.md` |
 | `logs/<timestamp>_run_experiment.log` | full log of a run, including the paper scripts' output |
 
