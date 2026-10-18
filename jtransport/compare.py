@@ -1,0 +1,132 @@
+"""Experiment 1 statistics: compare the self-patching grids of the transport arms (copy / jlens / controls).
+
+Local: pure numpy on (N, 2, L, L) grids (format of patch/multi_fact_experiment_nsamples.py and jtransport/grid.py:
+channel 1 = greedy exact match of the answer, [row, channel, src layer, tgt layer]; the diagonal is the unpatched model).
+Global context: the paper's headline number is the "oracle": a question counts as recovered if ANY of the L^2 layer
+pairs answers it (patch/compute_oracle.py). Because that is a best-of-L^2 statistic, an arm that merely perturbs the
+state differently could score differently by chance, so this module also reports
+  * the gain of each arm over its matched-noise control (same perturbation size per cell, random direction),
+  * a 2-fold cross-validated single layer pair (selected on half of the failed questions, scored on the other half),
+  * net flips (rescues - harms) at that pair and at the LRSD pair (0.75L -> 0.5L),
+  * paired bootstrap 95% CIs (Efron & Tibshirani 1993) and an exact McNemar test (distill/common.mcnemar).
+Statistics are per unique question, counting a question correct if it matches any of its gold answers (the
+"1toN" convention of distill/train_inject_lrsd.py), because rows of the same question are not independent.
+"""
+import numpy as np
+
+from jtransport.paths import use_repo_modules
+
+use_repo_modules()
+from common import mcnemar  # noqa: E402  exact two-sided McNemar on paired booleans (distill/common.py)
+
+
+def question_em(arr, qid):
+    """[Q, L, L] boolean exact-match grid per unique question: any of its rows (gold answers) correct at the cell."""
+    em = arr[:, 1] >= 1.0  # [N, L, L] greedy exact match per row
+    uq = np.unique(qid)  # sorted unique question ids
+    return np.stack([em[qid == q].any(0) for q in uq])  # OR over the rows of each question
+
+
+def rescue_stats(arr, qid):
+    """No-patch / oracle accuracies (row and question level) and the per-question rescue mask."""
+    em_rows = arr[:, 1] >= 1.0
+    emq = question_em(arr, qid)
+    Q = emq.shape[0]
+    base_q = emq[:, 0, 0]  # cell (0, 0) is a no-op patch = the unpatched model
+    oracle_q = emq.reshape(Q, -1).any(1)  # any layer pair answers the question
+    failed = ~base_q
+    rescued = failed & oracle_q  # wrong without patching, right with some patch
+    return {
+        "no_patch_row": float(em_rows[:, 0, 0].mean()),  # same as compute_oracle.py 'em no_patch'
+        "oracle_row": float(em_rows.reshape(len(em_rows), -1).any(1).mean()),  # same as compute_oracle.py 'oracle'
+        "no_patch_q": float(base_q.mean()),
+        "oracle_q": float(oracle_q.mean()),
+        "n_q": int(Q),
+        "n_failed_q": int(failed.sum()),
+        "rescued_q": float(rescued[failed].mean()) if failed.any() else 0.0,  # fraction of failed questions rescued
+        "rescued_mask": rescued,  # [Q] bool, aligned with np.unique(qid)
+        "cells_per_failed_q": float(emq[failed].reshape(int(failed.sum()), -1).sum(1).mean()) if failed.any() else 0.0,
+    }
+
+
+def net_flips(emq, s, t):
+    """At one fixed layer pair (s -> t): rescued failed questions, broken correct questions, and the difference."""
+    base = emq[:, 0, 0]
+    cell = emq[:, s, t]
+    rescues, harms = int((~base & cell).sum()), int((base & ~cell).sum())
+    return {"rescues": rescues, "harms": harms, "net": rescues - harms}
+
+
+def _best_cell(em_failed):
+    """Off-diagonal (s, t) with the highest rescue count over the given failed questions (ties: first in s, t order)."""
+    counts = em_failed.sum(0).astype(float)  # [L, L]
+    np.fill_diagonal(counts, -1)  # the diagonal is the unpatched model, never a rescue
+    s, t = np.unravel_index(np.argmax(counts), counts.shape)
+    return int(s), int(t)
+
+
+def cv_top_cell(emq, failed, seed=0):
+    """2-fold cross-validated single best layer pair: choose on one half of the failed questions, score on the other.
+
+    Removes the selection bias of reporting the in-sample best of L^2 - L cells (a non-oracle, deployable number:
+    one fixed patch for every question, like LRSD's fixed layer pair).
+    """
+    idx = np.flatnonzero(failed)
+    rng = np.random.default_rng(seed)
+    perm = rng.permutation(idx)
+    folds = [perm[: len(perm) // 2], perm[len(perm) // 2:]]
+    cells, rates = [], []
+    for a, b in ((0, 1), (1, 0)):
+        cell = _best_cell(emq[folds[a]])  # select on fold a
+        cells.append(cell)
+        rates.append(float(emq[folds[b], cell[0], cell[1]].mean()) if len(folds[b]) else 0.0)  # score on fold b
+    return {"cells": cells, "held_out_rescue": float(np.mean(rates))}
+
+
+def paired_bootstrap(x, y, n_boot=10000, seed=0):
+    """Mean of x - y over paired units with a percentile bootstrap 95% CI (resampling units with replacement)."""
+    x, y = np.asarray(x, float), np.asarray(y, float)
+    d = x - y
+    rng = np.random.default_rng(seed)
+    boots = d[rng.integers(0, len(d), size=(n_boot, len(d)))].mean(1) if len(d) else np.zeros(1)
+    return {"mean": float(d.mean()) if len(d) else 0.0, "lo": float(np.percentile(boots, 2.5)),
+            "hi": float(np.percentile(boots, 97.5)), "n": int(len(d))}
+
+
+def summarize(grids, qid, lrsd_pair, n_boot=10000, seed=0):
+    """All experiment-1 numbers for a dict {arm: (N, 2, L, L) grid} sharing rows `qid`.
+
+    Returns {"arms": {arm: stats}, "contrasts": {...}} (JSON-serialisable except nothing: masks are dropped).
+    """
+    arms, masks, failed_ref = {}, {}, None
+    for arm, arr in grids.items():
+        st = rescue_stats(arr, qid)
+        emq = question_em(arr, qid)
+        failed = ~emq[:, 0, 0]
+        if failed_ref is None:
+            failed_ref = failed
+        elif not np.array_equal(failed, failed_ref):  # same model, same prompts => identical unpatched answers
+            raise ValueError(f"arm {arm}: unpatched (diagonal) results differ from the first arm")
+        cv = cv_top_cell(emq, failed, seed=seed)
+        st["cv_top_cell"] = cv
+        st["cv_cell_flips"] = [net_flips(emq, *c) for c in cv["cells"]]
+        st["lrsd_pair"] = net_flips(emq, *lrsd_pair)
+        masks[arm] = st.pop("rescued_mask")[failed]  # rescued indicator per failed question
+        arms[arm] = st
+    contrasts = {}
+
+    def boot(a, b):
+        return paired_bootstrap(masks[a], masks[b], n_boot=n_boot, seed=seed)
+
+    for m in ("copy", "jlens", "norm"):
+        if m in masks and f"noise_{m}" in masks:
+            contrasts[f"{m}_minus_noise_{m}"] = boot(m, f"noise_{m}")  # gain over the same-size random perturbation
+    if "copy" in masks and "jlens" in masks:
+        contrasts["jlens_minus_copy"] = boot("jlens", "copy")
+        n01, n10, p = mcnemar(masks["copy"], masks["jlens"])  # n01: only jlens rescues, n10: only copy rescues
+        contrasts["mcnemar_copy_vs_jlens"] = {"n01": n01, "n10": n10, "p": p}
+        if "noise_copy" in masks and "noise_jlens" in masks:  # difference of noise-corrected gains
+            dj = masks["jlens"].astype(float) - masks["noise_jlens"]
+            dc = masks["copy"].astype(float) - masks["noise_copy"]
+            contrasts["jlens_gain_minus_copy_gain"] = paired_bootstrap(dj, dc, n_boot=n_boot, seed=seed)
+    return {"arms": arms, "contrasts": contrasts}
