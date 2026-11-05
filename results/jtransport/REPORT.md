@@ -105,7 +105,7 @@ Exact McNemar on final per-question correctness: LRSD vs baseline 17/10 (p = 0.2
 | selected ridge c, rel. perturbation of the transport | 0.1, 0.72 | 1 (none stable, so the strongest), 0.10 |
 | rescued of 384 failed (matched noise) | 29.4% (40.4%) | 9.6% (10.4%) |
 
-The same-token Jacobian is closer to the identity but still far from it. It is much noisier per sample, and at this budget (320 position samples per half) no tested ridge makes the transport split-half stable. At the strongest ridge the transport perturbs only 10% of ‖h_t‖ and rescues what its matched noise rescues (−0.8 pp, CI [−3.4, +1.8]).
+The same-token Jacobian is closer to the identity but still far from it. It is much noisier per sample, and at this budget (160 position samples per half: 40 prompts × 4 positions) no tested ridge makes the transport split-half stable. At the strongest ridge the transport perturbs only 10% of ‖h_t‖ and rescues what its matched noise rescues (−0.8 pp, CI [−3.4, +1.8]).
 
 Its bridge readout is the best of the three lenses in layers 1–6 (median rank ≈ 5·10³). Like the other J-lens, it is worse than the logit lens in layers 15–22, and it never reaches the top 10: [bridge_readout_pp.png](bridge_readout_pp.png).
 
@@ -115,7 +115,7 @@ This is the prediction in its plainest form: a reliably estimated, geometry-pres
 
 | question | answer on Qwen2.5-0.5B, 1000 injected facts, 1 seed |
 |---|---|
-| Are layer coordinates different? | Yes. `J_l` is far from the identity (‖J − I‖/‖I‖ ≈ 0.5–1.3) and badly conditioned (κ 10⁴–10⁶). |
+| Are layer coordinates different? | Yes. `J_l` is far from the identity (‖J − I‖/‖I‖ ≈ 0.5–1.3) and badly conditioned (κ ≈ 5.6·10³–1.6·10⁶). |
 | Does J-lens transport rescue more failed two-hop answers than the raw copy? | No. It rescues fewer: −5.7 pp, p = 0.0016. Corrected for its smaller perturbation the two are equal: −1.3 pp, CI [−6.5, +3.9]. |
 | Does a same-token Jacobian help? | No. Once it is stable it is a near no-op and equals its noise control. |
 | Does the raw copy itself beat random perturbations of the same size? | Not on the oracle (−9.6 pp). There is a small per-cell MRR edge (+0.004). The paper's restore-oracle is largely a perturbation effect at this scale. |
