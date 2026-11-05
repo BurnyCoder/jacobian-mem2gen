@@ -11,7 +11,7 @@
 Both assume every layer shares one coordinate system. The [J-lens](https://transformer-circuits.pub/2026/workspace/index.html) ([code](https://github.com/anthropics/jacobian-lens)) shows that this is not so. It fits `J_l = E[∂h_final/∂h_l]`, which maps a layer-`l` state into the final layer's basis, and early layers only read out correctly after that map.
 
 **Method.** Both experiments run on Qwen2.5-0.5B-Instruct, which fits an 8 GB GPU, with the paper's 1000-fact injection recipe:
-1. **Self-patching.** The paper's raw `copy` is compared with a J-lens transport `x = h_t + R_t (J_s h_s − J_t h_t)`, where `R_t` is a ridge inverse of `J_t`. This equals `pinv(J_t) J_s h_s`, the state whose J-lens readout at layer `t` matches `h_s`'s readout at layer `s`. Controls: matched-magnitude random perturbations (`noise_copy`, `noise_jlens`) and a scale-only fix (`norm`). The paper's oracle is reported, plus a cross-validated single layer pair and paired bootstrap CIs.
+1. **Self-patching.** The paper's raw `copy` is compared with a J-lens transport `x = h_t + R_t (J_s h_s − J_t h_t)`, where `R_t` is a ridge inverse of `J_t` with strength `c`. Without the ridge (`c → 0`, invertible `J_t`) this equals `pinv(J_t) J_s h_s`, the state whose J-lens readout at layer `t` matches `h_s`'s readout at layer `s`; the reported run uses `c = 0.1`, where the readout still differs by 34% (`results/jtransport/exp1.json`, `geometry.jlens.readout_error`). Controls: matched-magnitude random perturbations (`noise_copy`, `noise_jlens`) and a scale-only fix (`norm`). The paper's oracle is reported, plus a cross-validated single layer pair and paired bootstrap CIs.
 2. **LRSD.** The paper's raw-coordinate loss is compared with a J-space loss `relMSE(J_t h^t, sg(J_s h^s))`, alongside the λ = 0 baseline.
 
 Details, statistics and sources are in [docs/jtransport.md](docs/jtransport.md). Results and interpretation are in [results/jtransport/REPORT.md](results/jtransport/REPORT.md).
@@ -166,7 +166,7 @@ The experiments train only on the single-hop facts and test on the two-hop quest
 Each run fine-tunes the model on the two facts of **one** chaining item for 30 epochs (batch 1, lr 2e-5, constant schedule). Memorization and the two-hop question are evaluated after every epoch. The default template uses Qwen2.5-1.5B-Instruct with LoRA (r = 8, α = 32).
 
 ```bash
-# 100 items (seed 42), one LoRA run each, spread over the listed GPUs (~1-1.5 min per item on an A800)
+# 100 items (seed 42), one LoRA run each, spread over the listed GPUs (the paper reports 3-11 min per per-fact run on one A800, Appendix B)
 python train/run_specific_samples.py --gpus 0,1,2,3
 python train/knowing_using_gap.py checkpoints/per_fact/lora
 
@@ -182,7 +182,7 @@ python train/knowing_using_gap.py --method fft checkpoints/per_fact/fft
 - **T_gen:** the first epoch from which the two-hop question stays correct for 10 consecutive evaluations.
 - **A_mem / A_gen:** the final-epoch accuracies.
 
-For another model, edit `model.name` / `model.short_name` in the template; Llama-3.2-1B and Qwen2.5-3B are listed there as comments. 
+For another model, edit `model.name` / `model.short_name` in the template; Qwen2.5-3B, Llama-3.2-1B and Llama-3.2-3B are listed there as comments. 
 
 
 ### Multi-fact runs: 1,000 injected facts
@@ -197,7 +197,7 @@ python validation/evaluate_checkpoints.py --run_dir $RUN
 The recipe is LoRA r = 8, lr 1e-4, batch 10 and 50 epochs. One run takes about 40 min for Qwen2.5-1.5B and about 60 min for Qwen2.5-3B on one A800. Configs for all six models are in [`train/configs/multi_experiment_configs_model/`](train/configs/multi_experiment_configs_model).
 
 - **Run directory.** The run writes `config.yaml`, `experiment_data.json` (the sampled facts and questions), `training_logs.json` (per-epoch scores) and `checkpoint-last-epoch50/`.
-- **Final evaluation.** `evaluate_checkpoints.py` scores the final checkpoint by exact match. A memorization question counts as correct if the output matches *any* of its gold answers. Its output gives the **Mem.** column in the table below; the **w/o** column comes from the self-patching grid in the next section.
+- **Final evaluation.** `evaluate_checkpoints.py` scores the final checkpoint by exact match. A memorization question counts as correct if the output matches *any* of its gold answers. Its output gives the **Mem.** column of the paper's Table 2; the **w/o** column comes from the self-patching grid in the next section.
 - **Per-epoch scores.** The scores in `training_logs.json` use a lenient single-answer substring match, so memorization plateaus around 0.9 there.
 
 ## 2. Self-patching oracle
