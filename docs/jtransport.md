@@ -110,7 +110,7 @@ The `.npy` grids use the paper's format, so `uv run python patch/compute_oracle.
 
 - J-lens: Gurnee et al. 2026, https://transformer-circuits.pub/2026/workspace/index.html (arXiv 2607.15495); reference code https://github.com/anthropics/jacobian-lens (used as the `jlens` dependency, pinned to commit 581d398).
 - Back-patching of later-layer states into earlier layers for multi-hop queries: Biran et al. 2024, *Hopping Too Late*, arXiv 2406.12775.
-- Learned layer-to-layer maps, the tuned lens: Belrose et al. 2023, arXiv 2303.08112.
+- Learned per-layer affine maps into the final layer's prediction space, the tuned lens: Belrose et al. 2023, *Eliciting Latent Predictions from Transformers with the Tuned Lens*, arXiv 2303.08112.
 - Patching hidden states across layers in general: Ghandeharioun et al. 2024, *Patchscopes*, arXiv 2401.06102.
 - Ridge / Tikhonov regularisation through SVD filter factors: Hansen 1998, *Rank-Deficient and Discrete Ill-Posed Problems*, SIAM.
 - TransformerLens 3.9 (`HookedTransformer`, KV cache, `stop_at_layer`): https://github.com/TransformerLensOrg/TransformerLens.
